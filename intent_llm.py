@@ -11,6 +11,7 @@ LLM_MODEL = os.getenv("LLM_MODEL", "gpt-4o-mini")
 LLM_TIMEOUT_SEC = float(os.getenv("LLM_TIMEOUT_SEC", "2.5"))
 LLM_CACHE_SIZE = int(os.getenv("LLM_CACHE_SIZE", "256"))
 _LLM_CACHE = OrderedDict()
+API_KEY_TEMPLATE_VALUE = "PASTE_YOUR_OPENAI_API_KEY_HERE"
 
 
 FALLBACK = {
@@ -111,14 +112,38 @@ def _read_key_file(path: str) -> Optional[str]:
         with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
         key = data.get("apiKey") or data.get("OPENAI_API_KEY")
-        return key.strip() if isinstance(key, str) and key.strip() else None
+        if not isinstance(key, str):
+            return None
+        key = key.strip()
+        if not key or key == API_KEY_TEMPLATE_VALUE:
+            return None
+        return key
     except Exception as e:
         print(f"[intent_llm] failed to read {os.path.basename(path)}: {e}")
         return None
 
 
+def ensure_api_key_template(path: str) -> bool:
+    """Create a safe API-key template once; never overwrite an existing file."""
+    if os.path.exists(path):
+        return False
+    try:
+        with open(path, "x", encoding="utf-8") as f:
+            json.dump({"apiKey": API_KEY_TEMPLATE_VALUE}, f, ensure_ascii=False, indent=2)
+            f.write("\n")
+        print(f"[intent_llm] created API key template: {path}")
+        return True
+    except FileExistsError:
+        return False
+    except OSError as e:
+        print(f"[intent_llm] failed to create API key template: {e}")
+        return False
+
+
 def load_api_key() -> Optional[str]:
     base = os.path.dirname(__file__)
+    legacy_key_path = os.path.join(base, "openai_api.json")
+    ensure_api_key_template(legacy_key_path)
 
     # 對新手友善：優先本地檔案
     local_key = _read_key_file(os.path.join(base, "openai_api.local.json"))
@@ -131,7 +156,7 @@ def load_api_key() -> Optional[str]:
         return env_key.strip()
 
     # 最後相容舊檔名
-    return _read_key_file(os.path.join(base, "openai_api.json"))
+    return _read_key_file(legacy_key_path)
 
 
 api_key = load_api_key()
