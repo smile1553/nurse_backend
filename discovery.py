@@ -2,7 +2,7 @@ import asyncio
 import ipaddress
 import json
 import socket
-from typing import Optional, Tuple
+from typing import Optional, Set, Tuple
 
 
 DISCOVERY_PORT = 25566
@@ -61,83 +61,45 @@ def resolve_lan_ipv4(client_ip: str) -> Optional[str]:
     return next(iter(sorted(private or usable)), None)
 
 
-class DiscoveryService:
+class _DiscoveryProtocol(asyncio.DatagramProtocol):
     def __init__(self, server_port: int) -> None:
         self._server_port = server_port
-        self._socket: Optional[socket.socket] = None
-        self._task: Optional[asyncio.Task] = None
+        self._transport: Optional[asyncio.DatagramTransport] = None
+        self._reply_tasks: Set[asyncio.Task] = set()
 
-    async def start(self) -> None:
-        if self._task is not None and not self._task.done():
+    def connection_made(self, transport: asyncio.BaseTransport) -> None:
+        self._transport = transport  # type: ignore[assignment]
+
+    def datagram_received(
+        self, data: bytes, client_endpoint: Tuple[str, int]
+    ) -> None:
+        if data != DISCOVERY_REQUEST:
             return
 
-        listener = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        try:
-            listener.bind(("0.0.0.0", DISCOVERY_PORT))
-            listener.setblocking(False)
-        except OSError as error:
-            listener.close()
-            print(f"[discovery] failed to listen on UDP {DISCOVERY_PORT}: {error}")
-            return
+        task = asyncio.create_task(self._reply(client_endpoint))
+        self._reply_tasks.add(task)
+        task.add_done_callback(self._reply_tasks.discard)
 
-        self._socket = listener
-        self._task = asyncio.create_task(
-            self._listen(), name="udp-server-discovery"
-        )
-        print(f"[discovery] listening UDP 0.0.0.0:{DISCOVERY_PORT}")
+    def error_received(self, error: Exception) -> None:
+        print(f"[discovery] socket error: {error}")
+
+    def connection_lost(self, error: Optional[Exception]) -> None:
+        self._transport = None
+        if error is not None:
+            print(f"[discovery] listener closed with error: {error}")
 
     async def stop(self) -> None:
-        task = self._task
-        listener = self._socket
-        self._task = None
-        self._socket = None
-
-        if task is not None:
+        tasks = list(self._reply_tasks)
+        self._reply_tasks.clear()
+        for task in tasks:
             task.cancel()
-        if listener is not None:
-            listener.close()
-        if task is not None:
-            try:
-                await task
-            except asyncio.CancelledError:
-                pass
-            except Exception as error:
-                print(f"[discovery] error while stopping: {error}")
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
 
-        if task is not None or listener is not None:
-            print("[discovery] stopped")
-
-    async def _listen(self) -> None:
-        listener = self._socket
-        if listener is None:
-            return
-
-        loop = asyncio.get_running_loop()
-        while True:
-            try:
-                data, client_endpoint = await loop.sock_recvfrom(listener, 1024)
-                if data != DISCOVERY_REQUEST:
-                    continue
-                await self._reply(loop, listener, client_endpoint)
-            except asyncio.CancelledError:
-                raise
-            except OSError as error:
-                if self._socket is None:
-                    return
-                print(f"[discovery] socket error: {error}")
-                await asyncio.sleep(0.1)
-            except Exception as error:
-                print(f"[discovery] unexpected error: {error}")
-                await asyncio.sleep(0.1)
-
-    async def _reply(
-        self,
-        loop: asyncio.AbstractEventLoop,
-        listener: socket.socket,
-        client_endpoint: Tuple[str, int],
-    ) -> None:
+    async def _reply(self, client_endpoint: Tuple[str, int]) -> None:
         client_ip = client_endpoint[0]
-        server_ip = resolve_lan_ipv4(client_ip)
+        loop = asyncio.get_running_loop()
+        server_ip = await loop.run_in_executor(None, resolve_lan_ipv4, client_ip)
         if server_ip is None:
             print(
                 "[discovery] reply skipped: no usable LAN IPv4 "
@@ -155,7 +117,56 @@ class DiscoveryService:
             response, ensure_ascii=False, separators=(",", ":")
         ).encode("utf-8")
 
+        transport = self._transport
+        if transport is None or transport.is_closing():
+            return
+
         try:
-            await loop.sock_sendto(listener, payload, client_endpoint)
+            transport.sendto(payload, client_endpoint)
         except OSError as error:
             print(f"[discovery] failed to reply to {client_endpoint}: {error}")
+
+
+class DiscoveryService:
+    def __init__(self, server_port: int) -> None:
+        self._server_port = server_port
+        self._transport: Optional[asyncio.DatagramTransport] = None
+        self._protocol: Optional[_DiscoveryProtocol] = None
+
+    async def start(self) -> None:
+        if self._transport is not None and not self._transport.is_closing():
+            return
+
+        loop = asyncio.get_running_loop()
+        try:
+            transport, protocol = await loop.create_datagram_endpoint(
+                lambda: _DiscoveryProtocol(self._server_port),
+                local_addr=("0.0.0.0", DISCOVERY_PORT),
+                family=socket.AF_INET,
+            )
+        except Exception as error:
+            print(f"[discovery] failed to listen on UDP {DISCOVERY_PORT}: {error}")
+            return
+
+        self._transport = transport
+        self._protocol = protocol
+        print(f"[discovery] listening UDP 0.0.0.0:{DISCOVERY_PORT}")
+
+    async def stop(self) -> None:
+        transport = self._transport
+        protocol = self._protocol
+        self._transport = None
+        self._protocol = None
+
+        if transport is not None:
+            transport.close()
+        if protocol is not None:
+            try:
+                await protocol.stop()
+            except Exception as error:
+                print(f"[discovery] error while stopping: {error}")
+
+        if transport is not None or protocol is not None:
+            # Let the event loop deliver connection_lost and release the socket.
+            await asyncio.sleep(0)
+            print("[discovery] stopped")
