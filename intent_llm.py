@@ -145,15 +145,14 @@ def load_api_key() -> Optional[str]:
     legacy_key_path = os.path.join(base, "openai_api.json")
     ensure_api_key_template(legacy_key_path)
 
-    # 對新手友善：優先本地檔案
-    local_key = _read_key_file(os.path.join(base, "openai_api.local.json"))
-    if local_key:
-        return local_key
-
-    # 其次是環境變數
+    # Prefer environment/.env for server deployments; JSON files are legacy fallbacks.
     env_key = os.getenv("OPENAI_API_KEY")
     if env_key and env_key.strip():
         return env_key.strip()
+
+    local_key = _read_key_file(os.path.join(base, "openai_api.local.json"))
+    if local_key:
+        return local_key
 
     # 最後相容舊檔名
     return _read_key_file(legacy_key_path)

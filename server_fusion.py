@@ -4,11 +4,12 @@ from pathlib import Path
 import numpy as np
 import soundfile as sf
 from typing import Dict, Any, List, Tuple, Optional
-from fastapi import FastAPI, WebSocket, Request, HTTPException
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, HTTPException
 from fastapi.responses import JSONResponse, Response, FileResponse
 from discovery import udp_discovery_server
 import uvicorn
 from collections import deque
+from deepgram_streaming import DeepgramStreamingError, DeepgramStreamingSession, DeepgramTranscriptResult
 
 from fusion_loop import (
     fuse_once,
@@ -37,6 +38,9 @@ TTS_VOICE_BY_SPEAKER = {
     "narrator": os.getenv("TTS_VOICE_NARRATOR", "").strip(),
     "system": os.getenv("TTS_VOICE_SYSTEM", "").strip(),
 }
+VOICE_IDLE_KEEPALIVE_SEC = float(os.getenv("VOICE_IDLE_KEEPALIVE_SEC", "3.0"))
+VOICE_MAX_UTTERANCE_SEC = float(os.getenv("VOICE_MAX_UTTERANCE_SEC", "20.0"))
+VOICE_MIN_AUDIO_MS = float(os.getenv("VOICE_MIN_AUDIO_MS", "200"))
 
 
 
@@ -242,6 +246,64 @@ def _run_text_pipeline(input_text: str, prev_tension: float, history: List[str])
         "tension": tension,
     }
     return result, tension
+
+
+def _build_unity_emotion_payload(
+    fusion_res: Dict[str, Any],
+    result_type: str = "emotion_result",
+    extra: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    payload = {
+        "type": result_type,
+        "text": fusion_res.get("text", ""),
+        "raw_text": fusion_res.get("raw_text", ""),
+        "emotion": fusion_res.get("emotion", "neutral"),
+        "tension": fusion_res.get("tension", 0.0),
+        "llm": fusion_res.get("llm", fusion_res.get("semantic_analysis", {})),
+        "semantic_analysis": fusion_res.get("semantic_analysis", {}),
+        "tone_analysis": fusion_res.get("tone_analysis", {}),
+        "asr": fusion_res.get("asr", {}),
+        "ts": fusion_res.get("ts", ""),
+    }
+    if extra:
+        payload.update(extra)
+    return payload
+
+
+async def analyze_transcript_for_unity(
+    transcript: str,
+    asr_meta: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    loop = asyncio.get_running_loop()
+    if fusion_session._lock is None:
+        fusion_session._lock = asyncio.Lock()
+
+    async with fusion_session._lock:
+        prev = fusion_session._prev_tension
+        history = list(fusion_session._history)
+        fusion_res, tension = await loop.run_in_executor(
+            None,
+            _run_text_pipeline,
+            transcript,
+            prev,
+            history,
+        )
+        fusion_session._prev_tension = tension
+
+        text = (fusion_res.get("text", "") or "").strip()
+        if text:
+            fusion_session._history.append(text)
+
+    fusion_res = dict(fusion_res)
+    fusion_res["ts"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    if asr_meta:
+        fusion_res["asr"] = {**fusion_res.get("asr", {}), **asr_meta}
+
+    latest.update(fusion_res)
+    if (fusion_res.get("text", "") or fusion_res.get("raw_text", "")):
+        append_transcript_entry(fusion_res)
+
+    return _build_unity_emotion_payload(fusion_res)
 
 
 fusion_session = FusionSession()
@@ -601,6 +663,203 @@ def get_transcripts(limit: int = 50):
     limit = max(1, min(limit, 500))
     entries = read_recent_transcripts(limit)
     return {"items": entries, "count": len(entries)}
+
+
+def _voice_error(code: str, message: str) -> Dict[str, Any]:
+    return {
+        "type": "error",
+        "code": code,
+        "message": message,
+        "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+    }
+
+
+def _audio_ms(byte_count: int, sample_rate: int, channels: int = 1) -> float:
+    bytes_per_sample = 2
+    denom = max(1, sample_rate * channels * bytes_per_sample)
+    return (byte_count / denom) * 1000.0
+
+
+def _parse_voice_control(raw_text: str) -> Dict[str, Any]:
+    try:
+        payload = json.loads(raw_text or "{}")
+    except json.JSONDecodeError:
+        return {"type": "invalid_json"}
+    if not isinstance(payload, dict):
+        return {"type": "invalid_json"}
+    return payload
+
+
+@app.websocket("/voice")
+async def voice_ws(ws: WebSocket):
+    await ws.accept()
+
+    dg_session: Optional[DeepgramStreamingSession] = None
+    sample_rate = int(os.getenv("DEEPGRAM_SAMPLE_RATE", "16000"))
+    audio_bytes = 0
+    utterance_started_at = 0.0
+    request_id = ""
+
+    async def close_deepgram_session() -> None:
+        nonlocal dg_session
+        if dg_session is not None:
+            try:
+                await dg_session.close()
+            except Exception as e:
+                print(f"[voice] deepgram close failed: {e}")
+            dg_session = None
+
+    try:
+        while True:
+            try:
+                message = await asyncio.wait_for(ws.receive(), timeout=VOICE_IDLE_KEEPALIVE_SEC)
+            except asyncio.TimeoutError:
+                if dg_session is not None:
+                    try:
+                        await dg_session.keep_alive()
+                    except Exception as e:
+                        print(f"[voice] keepalive failed: {e}")
+                        await ws.send_json(_voice_error("deepgram_disconnected", "Deepgram stream disconnected"))
+                        await close_deepgram_session()
+                continue
+
+            if message.get("type") == "websocket.disconnect":
+                raise WebSocketDisconnect()
+
+            raw_text = message.get("text")
+            audio_chunk = message.get("bytes")
+
+            if raw_text is not None:
+                payload = _parse_voice_control(raw_text)
+                msg_type = str(payload.get("type", "")).strip().lower()
+
+                if msg_type == "start_utterance":
+                    await close_deepgram_session()
+
+                    try:
+                        sample_rate = int(payload.get("sampleRate") or payload.get("sample_rate") or sample_rate)
+                    except (TypeError, ValueError):
+                        sample_rate = 16000
+
+                    audio_bytes = 0
+                    utterance_started_at = time.perf_counter()
+                    request_id = str(payload.get("requestId") or payload.get("request_id") or "")
+
+                    try:
+                        dg_session = DeepgramStreamingSession(sample_rate=sample_rate)
+                        await dg_session.connect()
+                    except DeepgramStreamingError as e:
+                        await ws.send_json(_voice_error("deepgram_start_failed", str(e)))
+                        await close_deepgram_session()
+                        continue
+                    except Exception as e:
+                        await ws.send_json(_voice_error("deepgram_start_failed", str(e)))
+                        await close_deepgram_session()
+                        continue
+
+                    await ws.send_json({
+                        "type": "voice_ready",
+                        "sampleRate": sample_rate,
+                        "encoding": "linear16",
+                        "requestId": request_id,
+                    })
+                    continue
+
+                if msg_type == "end_utterance":
+                    if dg_session is None:
+                        await ws.send_json(_voice_error("not_recording", "No active utterance"))
+                        continue
+
+                    end_received_at = time.perf_counter()
+                    audio_duration_ms = _audio_ms(audio_bytes, sample_rate)
+                    if audio_duration_ms < VOICE_MIN_AUDIO_MS:
+                        await close_deepgram_session()
+                        await ws.send_json(_voice_error("too_short", "Audio is too short"))
+                        continue
+
+                    try:
+                        dg_result: DeepgramTranscriptResult = await dg_session.finalize()
+                    except Exception as e:
+                        await close_deepgram_session()
+                        await ws.send_json(_voice_error("deepgram_finalize_failed", str(e)))
+                        continue
+                    finally:
+                        await close_deepgram_session()
+
+                    transcript = (dg_result.text or "").strip()
+                    transcript_at = time.perf_counter()
+                    if not transcript:
+                        await ws.send_json(_voice_error("no_speech", "No speech detected"))
+                        continue
+
+                    try:
+                        response = await analyze_transcript_for_unity(
+                            transcript,
+                            asr_meta={
+                                "provider": "deepgram",
+                                "model": os.getenv("DEEPGRAM_MODEL", "nova-3"),
+                                "language": dg_result.language,
+                                "asr_confidence": dg_result.confidence,
+                                "sample_rate": sample_rate,
+                                "audio_ms": round(audio_duration_ms, 1),
+                            },
+                        )
+                    except Exception as e:
+                        await ws.send_json(_voice_error("emotion_analysis_failed", str(e)))
+                        continue
+
+                    sent_at = time.perf_counter()
+                    response["requestId"] = request_id
+                    response["latency"] = {
+                        "utterance_ms": round((end_received_at - utterance_started_at) * 1000.0, 1),
+                        "deepgram_finalize_ms": round((transcript_at - end_received_at) * 1000.0, 1),
+                        "emotion_analysis_ms": round((sent_at - transcript_at) * 1000.0, 1),
+                        "end_to_result_ms": round((sent_at - end_received_at) * 1000.0, 1),
+                    }
+                    await ws.send_json(response)
+                    print("[voice]", json.dumps({
+                        "text": response.get("text", ""),
+                        "tension": response.get("tension", 0.0),
+                        "intent": response.get("llm", {}).get("intent", ""),
+                        "end_to_result_ms": response["latency"]["end_to_result_ms"],
+                    }, ensure_ascii=False))
+                    continue
+
+                if msg_type in {"cancel_utterance", "cancel"}:
+                    await close_deepgram_session()
+                    await ws.send_json({"type": "voice_cancelled", "requestId": request_id})
+                    continue
+
+                await ws.send_json(_voice_error("unknown_message", f"Unknown control message: {msg_type}"))
+                continue
+
+            if audio_chunk is not None:
+                if dg_session is None:
+                    await ws.send_json(_voice_error("not_recording", "Audio received before start_utterance"))
+                    continue
+
+                if time.perf_counter() - utterance_started_at > VOICE_MAX_UTTERANCE_SEC:
+                    await close_deepgram_session()
+                    await ws.send_json(_voice_error("utterance_timeout", "Utterance exceeded max duration"))
+                    continue
+
+                audio_bytes += len(audio_chunk)
+                try:
+                    await dg_session.send_audio(audio_chunk)
+                except Exception as e:
+                    await close_deepgram_session()
+                    await ws.send_json(_voice_error("deepgram_send_failed", str(e)))
+                continue
+    except WebSocketDisconnect:
+        pass
+    except Exception as e:
+        print(f"[voice] websocket error: {e}")
+        try:
+            await ws.send_json(_voice_error("server_error", str(e)))
+        except Exception:
+            pass
+    finally:
+        await close_deepgram_session()
 
 @app.websocket("/ws")
 async def ws_feed(ws: WebSocket):

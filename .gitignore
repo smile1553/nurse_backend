@@ -1,2 +1,5 @@
 out/
+__pycache__/
 openai_api.json
+openai_api.local.json
+.env
