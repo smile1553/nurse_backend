@@ -260,17 +260,36 @@ def _run_text_pipeline(input_text: str, prev_tension: float, history: List[str])
     return result, tension
 
 
+def _tension_to_stage(tension: float) -> int:
+    value = clamp(float(tension or 0.0), -5.0, 5.0)
+    if value >= 2.0:
+        return 2
+    if value >= -0.5:
+        return 1
+    if value <= -3.0:
+        return -1
+    return 0
+
+
 def _build_unity_emotion_payload(
     fusion_res: Dict[str, Any],
     result_type: str = "emotion_result",
     extra: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
+    tension = fusion_res.get("tension", 0.0)
     payload = {
         "type": result_type,
+        "source": fusion_res.get("source", "student_speech"),
+        "utteranceId": fusion_res.get("utteranceId", ""),
+        "scenarioStepId": fusion_res.get("scenarioStepId", ""),
+        "scenarioStepIndex": fusion_res.get("scenarioStepIndex", -1),
         "text": fusion_res.get("text", ""),
         "raw_text": fusion_res.get("raw_text", ""),
         "emotion": fusion_res.get("emotion", "neutral"),
-        "tension": fusion_res.get("tension", 0.0),
+        "kidEmotionState": fusion_res.get("kidEmotionState", fusion_res.get("emotion", "neutral")),
+        "previousKidEmotionState": fusion_res.get("previousKidEmotionState", ""),
+        "tension": tension,
+        "stage": fusion_res.get("stage", _tension_to_stage(tension)),
         "llm": fusion_res.get("llm", fusion_res.get("semantic_analysis", {})),
         "semantic_analysis": fusion_res.get("semantic_analysis", {}),
         "tone_analysis": fusion_res.get("tone_analysis", {}),
@@ -285,6 +304,7 @@ def _build_unity_emotion_payload(
 async def analyze_transcript_for_unity(
     transcript: str,
     asr_meta: Optional[Dict[str, Any]] = None,
+    unity_meta: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     loop = asyncio.get_running_loop()
     if fusion_session._lock is None:
@@ -292,6 +312,7 @@ async def analyze_transcript_for_unity(
 
     async with fusion_session._lock:
         prev = fusion_session._prev_tension
+        previous_kid_emotion_state = tension_to_kid_emotion_state(prev)
         history = list(fusion_session._history)
         fusion_res, tension = await loop.run_in_executor(
             None,
@@ -308,6 +329,13 @@ async def analyze_transcript_for_unity(
 
     fusion_res = dict(fusion_res)
     fusion_res["ts"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    fusion_res["source"] = "student_speech"
+    fusion_res["previousKidEmotionState"] = previous_kid_emotion_state
+    fusion_res["stage"] = _tension_to_stage(fusion_res.get("tension", 0.0))
+    if unity_meta:
+        for key in ("utteranceId", "scenarioStepId", "scenarioStepIndex"):
+            if key in unity_meta:
+                fusion_res[key] = unity_meta[key]
     if asr_meta:
         fusion_res["asr"] = {**fusion_res.get("asr", {}), **asr_meta}
 
@@ -711,6 +739,7 @@ async def voice_ws(ws: WebSocket):
     audio_bytes = 0
     utterance_started_at = 0.0
     request_id = ""
+    unity_meta: Dict[str, Any] = {}
 
     async def close_deepgram_session() -> None:
         nonlocal dg_session
@@ -756,6 +785,16 @@ async def voice_ws(ws: WebSocket):
                     audio_bytes = 0
                     utterance_started_at = time.perf_counter()
                     request_id = str(payload.get("requestId") or payload.get("request_id") or "")
+                    unity_meta = {
+                        "utteranceId": str(payload.get("utteranceId") or payload.get("utterance_id") or request_id),
+                    }
+                    if payload.get("scenarioStepId") is not None:
+                        unity_meta["scenarioStepId"] = str(payload.get("scenarioStepId"))
+                    if payload.get("scenarioStepIndex") is not None:
+                        try:
+                            unity_meta["scenarioStepIndex"] = int(payload.get("scenarioStepIndex"))
+                        except (TypeError, ValueError):
+                            unity_meta["scenarioStepIndex"] = -1
 
                     try:
                         dg_session = DeepgramStreamingSession(sample_rate=sample_rate)
@@ -815,6 +854,7 @@ async def voice_ws(ws: WebSocket):
                                 "sample_rate": sample_rate,
                                 "audio_ms": round(audio_duration_ms, 1),
                             },
+                            unity_meta=unity_meta,
                         )
                     except Exception as e:
                         await ws.send_json(_voice_error("emotion_analysis_failed", str(e)))
