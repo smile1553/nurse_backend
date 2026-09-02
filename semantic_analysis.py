@@ -15,6 +15,8 @@ DEFAULT_SEMANTIC_ANALYSIS = {
 }
 
 RULE_OVERRIDE_MIN_SCORE = float(os.getenv("RULE_OVERRIDE_MIN_SCORE", "1.6"))
+RECOVERY_INTENTS = {"reassure", "praise", "ask_consent", "distract"}
+AGITATING_INTENTS = {"command", "threaten"}
 
 INTENT_RULES = {
     "reassure": ["不會痛", "不用怕", "沒事", "別怕", "放輕鬆", "很快就好", "一下就好", "你很棒"],
@@ -29,15 +31,58 @@ INTENT_RULES = {
 
 def semantic_tension_score(intent: str, coercion: float) -> float:
     table = {
-        "reassure": -1.0,
-        "praise": -0.8,
-        "explain": -0.4,
-        "distract": -0.2,
-        "ask_consent": -0.3,
+        "reassure": -2.4,
+        "praise": -2.0,
+        "explain": -0.8,
+        "distract": -1.2,
+        "ask_consent": -1.4,
         "command": 0.7,
-        "threaten": 2.0,
+        "threaten": 2.4,
     }
     return table.get(intent, 0.0) + 0.8 * float(coercion)
+
+
+def update_tension(
+    prev_tension: float,
+    intent: str,
+    semantic_score: float,
+    confidence: float,
+    tone_score: float = 0.0,
+) -> float:
+    """Update child tension with faster recovery for good nursing responses."""
+    intent_key = (intent or "").strip().lower()
+    prev = max(-5.0, min(5.0, float(prev_tension or 0.0)))
+    score = float(semantic_score or 0.0) + 0.7 * float(tone_score or 0.0)
+    conf = max(0.0, min(1.0, float(confidence or 0.0)))
+
+    if intent_key in RECOVERY_INTENTS and conf >= 0.55:
+        target = min(score, -4.0)
+        blend = 0.65 if conf >= 0.75 else 0.5
+        updated = prev * (1.0 - blend) + target * blend
+        if prev > 0.0:
+            updated -= min(0.8, prev * 0.25)
+        if conf >= 0.75:
+            updated = min(updated, -3.2)
+        return max(-5.0, min(5.0, updated))
+
+    if intent_key in AGITATING_INTENTS:
+        blend = 0.45 if intent_key == "threaten" else 0.35
+        return max(-5.0, min(5.0, prev * (1.0 - blend) + score * blend))
+
+    return max(-5.0, min(5.0, prev * 0.75 + score * 0.25))
+
+
+def tension_to_kid_emotion_state(tension: float) -> str:
+    """Map backend tension to the C# KidEmotionState enum thresholds."""
+    value = max(-5.0, min(5.0, float(tension or 0.0)))
+    score = ((value + 5.0) / 10.0) * 100.0
+    if score >= 80.0:
+        return "Meltdown"
+    if score >= 55.0:
+        return "Crying"
+    if score >= 20.0:
+        return "Uneasy"
+    return "Calm"
 
 
 def rule_based_intent(text: str) -> Optional[Tuple[str, float]]:

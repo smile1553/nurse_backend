@@ -6,5 +6,6 @@ pydantic
 numpy
 soundfile
 websockets
+sounddevice
 faster-whisper
 opencc

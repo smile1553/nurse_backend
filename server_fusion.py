@@ -16,7 +16,13 @@ from fusion_loop import (
     sanitize_transcript,
     clamp,
 )
-from semantic_analysis import DEFAULT_SEMANTIC_ANALYSIS, analyze_semantics, semantic_tension_score
+from semantic_analysis import (
+    DEFAULT_SEMANTIC_ANALYSIS,
+    analyze_semantics,
+    semantic_tension_score,
+    tension_to_kid_emotion_state,
+    update_tension,
+)
 from tone_analysis import DEFAULT_TONE_ANALYSIS
 from test_sensevoice import warmup_model
 
@@ -229,16 +235,22 @@ def _run_text_pipeline(input_text: str, prev_tension: float, history: List[str])
         llm = dict(DEFAULT_SEMANTIC_ANALYSIS)
         iscore = 0.0
 
-    # Text test mode bypasses ASR/emotion; keep intent+tension path identical.
-    decay = 0.7
-    tension = clamp(prev_tension * decay + iscore * (1 - decay), -5.0, +5.0)
+    tension = update_tension(
+        prev_tension,
+        llm.get("intent", ""),
+        iscore,
+        llm.get("confidence", 0.0),
+        0.0,
+    )
 
+    kid_emotion_state = tension_to_kid_emotion_state(tension)
     result = {
         "raw_text": raw_text,
         "text": text,
         "semantic_analysis": llm,
         "tone_analysis": dict(DEFAULT_TONE_ANALYSIS),
-        "emotion": "neutral",
+        "emotion": kid_emotion_state,
+        "kidEmotionState": kid_emotion_state,
         "emotion_probs": {},
         "asr": {"asr_confidence": 1.0 if text else 0.0, "language": "zh", "segment_count": 1 if text else 0, "rms": None},
         "llm": llm,

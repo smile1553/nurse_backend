@@ -16,6 +16,8 @@ from semantic_analysis import (
     DEFAULT_SEMANTIC_ANALYSIS,
     analyze_semantics,
     semantic_tension_score,
+    tension_to_kid_emotion_state,
+    update_tension,
 )
 from tone_analysis import analyze_tone
 
@@ -253,16 +255,23 @@ def fuse_once(wav_path: str, prev_tension: float = 0.0, recent_texts: Optional[L
         llm = dict(DEFAULT_SEMANTIC_ANALYSIS)
         iscore = 0.0
 
-    W_tone, W_intent, decay = 0.7, 1.0, 0.7
-    delta = W_tone * tone_score + W_intent * iscore
-    tension = clamp(prev_tension*decay + delta*(1-decay), -5.0, +5.0)
+    tension = update_tension(
+        prev_tension,
+        llm.get("intent", ""),
+        iscore,
+        llm.get("confidence", 0.0),
+        tone_score,
+    )
 
+    kid_emotion_state = tension_to_kid_emotion_state(tension)
     result = {
         "raw_text": raw_text,
         "text": text,
         "semantic_analysis": llm,
         "tone_analysis": tone,
-        "emotion": tone["emotion"],
+        "emotion": kid_emotion_state,
+        "kidEmotionState": kid_emotion_state,
+        "speechEmotion": tone["emotion"],
         "emotion_probs": tone["emotion_probs"],
         "asr": asr_meta,
         "llm": llm,
