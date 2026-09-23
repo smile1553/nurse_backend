@@ -1,5 +1,11 @@
 out/
 __pycache__/
+.venv/
+.vscode/
+.DS_Store
+*.meta
+*.py[cod]
+/test.wav
 openai_api.json
 openai_api.local.json
 .env

@@ -1,9 +1,5 @@
-import json
 import math
 import os
-from pathlib import Path
-
-import soundfile as sf
 
 _MODEL = None
 ASR_MODEL_NAME = os.getenv("ASR_MODEL_NAME", "medium")
@@ -18,19 +14,6 @@ ASR_VAD_FILTER = os.getenv("ASR_VAD_FILTER", "1").strip() in {"1", "true", "True
 ASR_NO_SPEECH_THRESHOLD = float(os.getenv("ASR_NO_SPEECH_THRESHOLD", "0.85"))
 ASR_LOG_PROB_THRESHOLD = float(os.getenv("ASR_LOG_PROB_THRESHOLD", "-1.0"))
 ASR_COMPRESSION_RATIO_THRESHOLD = float(os.getenv("ASR_COMPRESSION_RATIO_THRESHOLD", "2.0"))
-
-
-def record_wav(path="Assets/MyAssests/Analysis/audio/sample.wav", secs=5, sr=16000):
-    import sounddevice as sd
-
-    Path("Assets/MyAssests/Analysis/audio").mkdir(parents=True, exist_ok=True)
-    print(f"[REC] speak for {secs}s ...")
-    audio = sd.rec(int(secs * sr), samplerate=sr, channels=1, dtype="float32")
-    sd.wait()
-    sf.write(path, audio, sr)
-    print(f"[REC] saved -> {path}")
-    return path
-
 
 def _load_faster_whisper_model():
     from faster_whisper import WhisperModel
@@ -120,9 +103,3 @@ def sensevoice_infer(wav_path):
             "segment_count": len(segments),
         },
     }
-
-
-if __name__ == "__main__":
-    wav = record_wav()
-    result = sensevoice_infer(wav)
-    print(json.dumps(result, ensure_ascii=False, indent=2))
