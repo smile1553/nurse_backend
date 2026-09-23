@@ -2,16 +2,20 @@ import os, json, re
 from collections import OrderedDict
 from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field
-from dotenv import load_dotenv
 import openai
+from env_config import (
+    OPENAI_API_KEY_TEMPLATE_VALUE,
+    initialize_environment,
+    read_api_key,
+)
 
-load_dotenv()
+initialize_environment()
 
 LLM_MODEL = os.getenv("LLM_MODEL", "gpt-4o-mini")
 LLM_TIMEOUT_SEC = float(os.getenv("LLM_TIMEOUT_SEC", "2.5"))
 LLM_CACHE_SIZE = int(os.getenv("LLM_CACHE_SIZE", "256"))
 _LLM_CACHE = OrderedDict()
-API_KEY_TEMPLATE_VALUE = "PASTE_YOUR_OPENAI_API_KEY_HERE"
+API_KEY_TEMPLATE_VALUE = OPENAI_API_KEY_TEMPLATE_VALUE
 
 
 FALLBACK = {
@@ -146,9 +150,9 @@ def load_api_key() -> Optional[str]:
     ensure_api_key_template(legacy_key_path)
 
     # Prefer environment/.env for server deployments; JSON files are legacy fallbacks.
-    env_key = os.getenv("OPENAI_API_KEY")
-    if env_key and env_key.strip():
-        return env_key.strip()
+    env_key = read_api_key("OPENAI_API_KEY", API_KEY_TEMPLATE_VALUE)
+    if env_key:
+        return env_key
 
     local_key = _read_key_file(os.path.join(base, "openai_api.local.json"))
     if local_key:

@@ -5,9 +5,13 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 from urllib.parse import urlencode
 
-from dotenv import load_dotenv
+from env_config import (
+    DEEPGRAM_API_KEY_TEMPLATE_VALUE,
+    initialize_environment,
+    read_api_key,
+)
 
-load_dotenv()
+initialize_environment()
 
 
 class DeepgramStreamingError(RuntimeError):
@@ -42,7 +46,9 @@ class DeepgramStreamingSession:
         self.finalize_timeout_sec = float(
             finalize_timeout_sec or os.getenv("DEEPGRAM_FINALIZE_TIMEOUT_SEC", "1.2")
         )
-        self._api_key = (os.getenv("DEEPGRAM_API_KEY") or "").strip()
+        self._api_key = read_api_key(
+            "DEEPGRAM_API_KEY", DEEPGRAM_API_KEY_TEMPLATE_VALUE
+        )
         self._ws = None
         self._reader_task: Optional[asyncio.Task] = None
         self._final_event = asyncio.Event()
