@@ -1,0 +1,9 @@
+[transcripts] reset: C:\Users\Ren\Desktop\nurse_backend\out\transcripts.jsonl
+[warmup] skipped on startup (ASR_WARMUP_ON_START=0)
+[discovery] listening UDP 0.0.0.0:9450
+INFO:     127.0.0.1:58011 - "GET /api/sessions/current HTTP/1.1" 200 OK
+[student_results] session created -> 20260921_205128_ea966b4b
+INFO:     127.0.0.1:54245 - "POST /api/sessions HTTP/1.1" 201 Created
+INFO:     127.0.0.1:54245 - "POST /api/student-runs/start HTTP/1.1" 200 OK
+[student_results] session=20260921_205128_ea966b4b result=62dbdfd4-f1e3-4f23-8334-60140e38cd1e duplicate=False total=88
+INFO:     127.0.0.1:54245 - "PUT /api/sessions/20260921_205128_ea966b4b/results/62dbdfd4-f1e3-4f23-8334-60140e38cd1e HTTP/1.1" 200 OK

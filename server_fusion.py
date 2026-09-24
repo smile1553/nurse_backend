@@ -1,6 +1,7 @@
 # server_fusion.py
 import asyncio, json, time, io, os, tempfile, subprocess
 from pathlib import Path
+from uuid import UUID
 import numpy as np
 import soundfile as sf
 from typing import Dict, Any, List, Tuple, Optional
@@ -25,6 +26,15 @@ from semantic_analysis import (
 )
 from tone_analysis import DEFAULT_TONE_ANALYSIS
 from test_sensevoice import warmup_model
+from excel_result_service import (
+    ExcelResultService,
+    IdempotencyConflictError,
+    InactiveSessionError,
+    ResultServiceError,
+    SessionNotFoundError,
+    StorageBusyError,
+)
+from result_models import StudentResultSubmission, StudentRunStart, isoformat_seconds
 
 OUT_DIR = Path(__file__).resolve().parent / "out"
 OUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -33,6 +43,8 @@ SESSION_AUDIO_DIR = OUT_DIR / "session_audio"
 SESSION_AUDIO_DIR.mkdir(parents=True, exist_ok=True)
 SESSION_REPORT_DIR = OUT_DIR / "session_reports"
 SESSION_REPORT_DIR.mkdir(parents=True, exist_ok=True)
+STUDENT_RESULT_DIR = OUT_DIR / "student_results"
+student_result_service = ExcelResultService(STUDENT_RESULT_DIR)
 ENERGY_GATE_RMS = float(os.getenv("ENERGY_GATE_RMS", "0.003"))
 ASR_WARMUP_ON_START = os.getenv("ASR_WARMUP_ON_START", "1").strip() in {"1", "true", "True", "yes", "on"}
 TTS_RATE = int(os.getenv("TTS_RATE", "185"))
@@ -137,6 +149,13 @@ class FusionSession:
                 self._history.append(text)
 
         return res
+
+    async def reset(self) -> None:
+        if self._lock is None:
+            self._lock = asyncio.Lock()
+        async with self._lock:
+            self._prev_tension = 0.0
+            self._history.clear()
 
 
 class RecordingSession:
@@ -385,6 +404,115 @@ def append_transcript_entry(data: Dict[str, Any]) -> None:
             fp.write(json.dumps(entry, ensure_ascii=False) + "\n")
     except OSError as e:
         print(f"[fusion] failed to append transcript: {e}")
+
+
+def reset_latest_emotion_state() -> None:
+    latest.clear()
+    latest.update({
+        "text": "",
+        "emotion": "neutral",
+        "emotion_probs": {},
+        "llm": {
+            "intent": "talk",
+            "action_tag": "neutral",
+            "sentiment": "neutral",
+            "toxicity": 0.0,
+            "coercion": 0.0,
+            "confidence": 0.0,
+            "keywords": [],
+        },
+        "semantic_analysis": dict(DEFAULT_SEMANTIC_ANALYSIS),
+        "tone_analysis": dict(DEFAULT_TONE_ANALYSIS),
+        "tension": 0.0,
+        "ts": "",
+    })
+
+
+def result_service_error_response(error: Exception) -> JSONResponse:
+    if isinstance(error, SessionNotFoundError):
+        status_code = 404
+    elif isinstance(error, (InactiveSessionError, IdempotencyConflictError)):
+        status_code = 409
+    elif isinstance(error, StorageBusyError):
+        status_code = 503
+    else:
+        status_code = 500
+    return JSONResponse(status_code=status_code, content={"ok": False, "error": str(error)})
+
+
+@app.post("/api/sessions", status_code=201)
+async def create_experiment_session():
+    try:
+        session = await asyncio.to_thread(student_result_service.create_session)
+        print(f"[student_results] session created -> {session['sessionId']}")
+        return {
+            "ok": True,
+            "sessionId": session["sessionId"],
+            "createdAt": session["createdAt"],
+        }
+    except ResultServiceError as error:
+        return result_service_error_response(error)
+
+
+@app.get("/api/sessions/current")
+async def get_current_experiment_session():
+    try:
+        session = await asyncio.to_thread(student_result_service.get_current_session)
+        if session is None:
+            return JSONResponse(
+                status_code=404,
+                content={"ok": False, "error": "no active session"},
+            )
+        return {
+            "ok": True,
+            "sessionId": session["sessionId"],
+            "createdAt": session["createdAt"],
+        }
+    except ResultServiceError as error:
+        return result_service_error_response(error)
+
+
+@app.post("/api/student-runs/start")
+async def start_student_run(payload: StudentRunStart):
+    try:
+        await asyncio.to_thread(student_result_service.ensure_active_session, payload.sessionId)
+        await fusion_session.reset()
+        reset_latest_emotion_state()
+        return {
+            "ok": True,
+            "sessionId": payload.sessionId,
+            "resultId": str(payload.resultId),
+            "studentId": payload.studentId,
+            "loginTime": isoformat_seconds(payload.loginTime),
+        }
+    except ResultServiceError as error:
+        return result_service_error_response(error)
+
+
+@app.put("/api/sessions/{session_id}/results/{result_id}")
+async def submit_student_result(
+    session_id: str,
+    result_id: UUID,
+    payload: StudentResultSubmission,
+):
+    try:
+        result = await asyncio.to_thread(
+            student_result_service.append_result,
+            session_id,
+            str(result_id),
+            payload.studentId,
+            isoformat_seconds(payload.loginTime),
+            payload.correctCount,
+            payload.toneScore,
+        )
+        print(
+            "[student_results] "
+            f"session={session_id} result={result_id} duplicate={result['duplicate']} "
+            f"total={result['totalScore']}"
+        )
+        return result
+    except ResultServiceError as error:
+        return result_service_error_response(error)
 
 
 def build_session_audio_path(session_id: str) -> Path:

@@ -9,3 +9,4 @@ websockets
 sounddevice
 faster-whisper
 opencc
+openpyxl
