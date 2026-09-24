@@ -7,7 +7,7 @@ import soundfile as sf
 from typing import Dict, Any, List, Tuple, Optional
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, HTTPException
 from fastapi.responses import JSONResponse, Response, FileResponse
-from discovery import udp_discovery_server
+from discovery import DiscoveryService
 import uvicorn
 from collections import deque
 from deepgram_streaming import DeepgramStreamingError, DeepgramStreamingSession, DeepgramTranscriptResult
@@ -125,6 +125,9 @@ latest: Dict[str, Any] = {
 }
 
 app = FastAPI()
+SERVER_HOST = "0.0.0.0"
+SERVER_PORT = 8000
+discovery_service = DiscoveryService(server_port=SERVER_PORT)
 
 
 class FusionSession:
@@ -1053,7 +1056,7 @@ async def ws_feed(ws: WebSocket):
 
 @app.on_event("startup")
 async def on_start():
-    asyncio.create_task(udp_discovery_server(http_port=8000))
+    await discovery_service.start()
     reset_transcripts_file()
 
     if not ASR_WARMUP_ON_START:
@@ -1069,6 +1072,11 @@ async def on_start():
     except Exception as e:
         print(f"[warmup] SenseVoice warmup failed: {e}")
 
+
+@app.on_event("shutdown")
+async def on_shutdown():
+    await discovery_service.stop()
+
 if __name__ == "__main__":
     # 0.0.0.0 讓區網裝置（Quest）可連；port 可自訂
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host=SERVER_HOST, port=SERVER_PORT)
