@@ -19,7 +19,7 @@ API_KEY_TEMPLATE_VALUE = OPENAI_API_KEY_TEMPLATE_VALUE
 
 
 FALLBACK = {
-    "intent": "explain",
+    "intent": "neutral",
     "action_tag": "neutral",
     "sentiment": "neutral",
     "toxicity": 0.0,
@@ -28,12 +28,15 @@ FALLBACK = {
     "keywords": []
 }
 
-ALLOWED_INTENTS = {"reassure", "distract", "command", "threaten", "explain", "ask_consent", "praise", "neutral"}
+ALLOWED_INTENTS = {"reassure", "encourage", "neutral", "command", "force", "threat"}
 ALLOWED_ACTION_TAGS = {
     "neutral",
     "reassure",
+    "encourage",
     "distract",
     "command",
+    "force",
+    "threat",
     "ask_consent",
     "praise",
     "ask_preference",
@@ -56,6 +59,11 @@ ALLOWED_ACTION_TAGS = {
     "scenario_wrap_up",
 }
 INTENT_ALIASES = {
+    "distract": "reassure",
+    "ask_consent": "reassure",
+    "explain": "neutral",
+    "praise": "encourage",
+    "threaten": "threat",
     "comfort": "reassure",
     "安撫": "reassure",
     "轉移注意": "distract",
@@ -106,9 +114,6 @@ KEYWORD_ALIASES = {
     "馬小芽": "芽芽",
     "媽咪": "媽媽",
 }
-LLM_MIN_CONF = float(os.getenv("LLM_MIN_CONF", "0.40"))
-
-
 def _read_key_file(path: str) -> Optional[str]:
     if not os.path.exists(path):
         return None
@@ -170,7 +175,7 @@ else:
 
 
 class IntentSchema(BaseModel):
-    intent: str = Field(description="reassure|distract|command|threaten|explain|ask_consent|praise|neutral")
+    intent: str = Field(description="reassure|encourage|neutral|command|force|threat")
     action_tag: str = Field(description="specific scenario semantic tag in snake_case; use neutral if unclear")
     sentiment: str = Field(description="positive|neutral|negative")
     toxicity: float
@@ -180,19 +185,18 @@ class IntentSchema(BaseModel):
 
 
 SYSTEM_PROMPT = (
-    "你是兒科護理情境的語言分析器。輸入包含 previous_utterance（前一句）與 current_utterance（當前句）。"
-    "請用 previous_utterance 協助理解當前句，但最終 intent 必須對應 current_utterance。"
-    "除了 general intent，還要輸出更具體的 action_tag，專門描述這句話在兒科護理教學劇情中的行動語意。"
-    "intent 要選最通用的語用目的，例如 reassure、explain、ask_consent；"
-    "action_tag 要盡量選更貼近教案步驟的細分類。若一句話同時符合通用 intent 與特定教案行動，"
-    "intent 保持通用類別，action_tag 選最具體的教案標籤，不要把兩者混為一談。"
+    "你是兒科護理情境的語言分析器。請使用 previous_utterance 理解 current_utterance，"
+    "但只根據 current_utterance 選擇一個 intent："
+    "reassure、encourage、neutral、command、force、threat。"
+    "force 表示強迫行為，threat 表示威脅後果。只判斷 intent，不計算 tension、patience或emotion。"
+    "action_tag 要選最貼近教案步驟的細分類。"
     "action_tag 優先從以下集合選擇：introduce_bp_exam、explain_resp_first、calm_guidance、ask_preference、engagement_strategy、"
     "role_play_demo、reduce_fear、praise_child、transition_to_temp、reassure_child、delay_temp_exam、role_play_temp、"
     "practice_before_exam、coach_comfort_words、temp_reassurance、invite_bp_cooperation、closing_praise、scenario_wrap_up、"
-    "ask_consent、reassure、distract、praise、command、neutral。"
+    "ask_consent、reassure、encourage、command、force、threat、neutral。"
     "如果輸入有 current_step_id、player_prompt、expected_intents，請把它們當成當前教案上下文來判斷 action_tag。"
     "如果句子太模糊或不屬於任何具體劇情行動，就用 neutral。"
-    "只輸出 JSON：intent（reassure|distract|command|threaten|explain|ask_consent|praise|neutral）、action_tag、"
+    "只輸出 JSON：intent（reassure|encourage|neutral|command|force|threat）、action_tag、"
     "sentiment（positive|neutral|negative）、toxicity(0~1)、coercion(0~1)、"
     "confidence(0~1)、keywords（字串陣列）。只回 JSON，勿包含其他文字。"
 )
@@ -249,6 +253,13 @@ def _to_float(x, default=0.0) -> float:
 def _normalize_intent(x: str) -> str:
     key = (x or "").strip().lower()
     mapped = INTENT_ALIASES.get(key, key)
+    mapped = {
+        "distract": "reassure",
+        "ask_consent": "reassure",
+        "explain": "neutral",
+        "praise": "encourage",
+        "threaten": "threat",
+    }.get(mapped, mapped)
     return mapped if mapped in ALLOWED_INTENTS else "neutral"
 
 
@@ -301,9 +312,6 @@ def normalize_llm_output(data: dict) -> dict:
     base["confidence"] = max(0.0, min(1.0, _to_float(data.get("confidence", 0.0))))
     base["keywords"] = _normalize_keywords(data.get("keywords", []))
 
-    if base["confidence"] < LLM_MIN_CONF and base["intent"] != "neutral":
-        base["intent"] = "neutral"
-        base["action_tag"] = "neutral"
     return base
 
 

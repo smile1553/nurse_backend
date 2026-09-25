@@ -9,7 +9,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, HTTPExcept
 from fastapi.responses import JSONResponse, Response, FileResponse
 from discovery import DiscoveryService
 import uvicorn
-from collections import deque
+from collections import OrderedDict, deque
 from deepgram_streaming import DeepgramStreamingError, DeepgramStreamingSession, DeepgramTranscriptResult
 
 from fusion_loop import (
@@ -22,6 +22,7 @@ from semantic_analysis import (
     analyze_semantics,
     semantic_tension_score,
     tension_to_kid_emotion_state,
+    tension_to_patience_score,
     update_tension,
 )
 from tone_analysis import DEFAULT_TONE_ANALYSIS
@@ -46,7 +47,7 @@ SESSION_REPORT_DIR.mkdir(parents=True, exist_ok=True)
 STUDENT_RESULT_DIR = OUT_DIR / "student_results"
 student_result_service = ExcelResultService(STUDENT_RESULT_DIR)
 ENERGY_GATE_RMS = float(os.getenv("ENERGY_GATE_RMS", "0.003"))
-ASR_WARMUP_ON_START = os.getenv("ASR_WARMUP_ON_START", "1").strip() in {"1", "true", "True", "yes", "on"}
+ASR_WARMUP_ON_START = os.getenv("ASR_WARMUP_ON_START", "0").strip() in {"1", "true", "True", "yes", "on"}
 TTS_RATE = int(os.getenv("TTS_RATE", "185"))
 TTS_DEFAULT_VOICE = os.getenv("TTS_DEFAULT_VOICE", "").strip()
 TTS_VOICE_BY_SPEAKER = {
@@ -59,6 +60,8 @@ TTS_VOICE_BY_SPEAKER = {
 VOICE_IDLE_KEEPALIVE_SEC = float(os.getenv("VOICE_IDLE_KEEPALIVE_SEC", "3.0"))
 VOICE_MAX_UTTERANCE_SEC = float(os.getenv("VOICE_MAX_UTTERANCE_SEC", "20.0"))
 VOICE_MIN_AUDIO_MS = float(os.getenv("VOICE_MIN_AUDIO_MS", "200"))
+AUDIO_REQUEST_CACHE_SIZE = max(1, int(os.getenv("AUDIO_REQUEST_CACHE_SIZE", "256")))
+INITIAL_TENSION = -5.0
 
 
 
@@ -118,10 +121,14 @@ def decode_wav_to_mono16k(bytes_data: bytes, apply_preprocess: bool = True) -> t
 
 latest: Dict[str, Any] = {
     "text": "", "emotion": "neutral", "emotion_probs": {},
-    "llm": {"intent":"talk","action_tag":"neutral","sentiment":"neutral","toxicity":0.0,"coercion":0.0,"confidence":0.0,"keywords":[]},
+    "llm": {"intent":"neutral","action_tag":"neutral","sentiment":"neutral","toxicity":0.0,"coercion":0.0,"confidence":0.0,"keywords":[]},
     "semantic_analysis": dict(DEFAULT_SEMANTIC_ANALYSIS),
     "tone_analysis": dict(DEFAULT_TONE_ANALYSIS),
-    "tension": 0.0, "ts": ""
+    "tension": INITIAL_TENSION,
+    "patienceScore": 100.0,
+    "kidEmotionState": "Calm",
+    "previousKidEmotionState": "Calm",
+    "ts": ""
 }
 
 app = FastAPI()
@@ -132,7 +139,7 @@ discovery_service = DiscoveryService(server_port=SERVER_PORT)
 
 class FusionSession:
     def __init__(self, history_len: int = 3):
-        self._prev_tension = 0.0
+        self._prev_tension = INITIAL_TENSION
         self._history = deque(maxlen=history_len)
         self._lock = None
 
@@ -157,7 +164,7 @@ class FusionSession:
         if self._lock is None:
             self._lock = asyncio.Lock()
         async with self._lock:
-            self._prev_tension = 0.0
+            self._prev_tension = INITIAL_TENSION
             self._history.clear()
 
 
@@ -231,7 +238,12 @@ class RecordingSession:
         }
 
 
-def _run_fusion_pipeline(wav: np.ndarray, sr: int, prev_tension: float, history: List[str]) -> Tuple[Dict[str, Any], float]:
+def _run_fusion_pipeline(
+    wav: np.ndarray,
+    sr: int,
+    prev_tension: float,
+    history: List[str],
+) -> Tuple[Dict[str, Any], float]:
     with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
         sf.write(tmp.name, wav, sr)
         tmp_path = tmp.name
@@ -245,19 +257,24 @@ def _run_fusion_pipeline(wav: np.ndarray, sr: int, prev_tension: float, history:
     return res, tension
 
 
-def _run_text_pipeline(input_text: str, prev_tension: float, history: List[str]) -> Tuple[Dict[str, Any], float]:
+def _run_text_pipeline(
+    input_text: str,
+    prev_tension: float,
+    history: List[str],
+    context: Optional[Dict[str, Any]] = None,
+) -> Tuple[Dict[str, Any], float]:
     raw_text = (input_text or "").strip()
     text = sanitize_transcript(raw_text)
 
     if text:
-        llm, llm_window_text = analyze_semantics(text, history)
+        llm, llm_window_text = analyze_semantics(text, history, context=context)
         iscore = semantic_tension_score(llm.get("intent", ""), llm.get("coercion", 0.0))
     else:
         llm_window_text = ""
         llm = dict(DEFAULT_SEMANTIC_ANALYSIS)
         iscore = 0.0
 
-    tension = update_tension(
+    tension = prev_tension if not text else update_tension(
         prev_tension,
         llm.get("intent", ""),
         iscore,
@@ -278,6 +295,7 @@ def _run_text_pipeline(input_text: str, prev_tension: float, history: List[str])
         "llm": llm,
         "llm_window_text": llm_window_text,
         "tension": tension,
+        "patienceScore": tension_to_patience_score(tension),
     }
     return result, tension
 
@@ -309,8 +327,10 @@ def _build_unity_emotion_payload(
         "raw_text": fusion_res.get("raw_text", ""),
         "emotion": fusion_res.get("emotion", "neutral"),
         "kidEmotionState": fusion_res.get("kidEmotionState", fusion_res.get("emotion", "neutral")),
+        "emotionState": fusion_res.get("kidEmotionState", fusion_res.get("emotion", "neutral")),
         "previousKidEmotionState": fusion_res.get("previousKidEmotionState", ""),
         "tension": tension,
+        "patienceScore": fusion_res.get("patienceScore", tension_to_patience_score(tension)),
         "stage": fusion_res.get("stage", _tension_to_stage(tension)),
         "llm": fusion_res.get("llm", fusion_res.get("semantic_analysis", {})),
         "semantic_analysis": fusion_res.get("semantic_analysis", {}),
@@ -342,6 +362,7 @@ async def analyze_transcript_for_unity(
             transcript,
             prev,
             history,
+            {"current_step_id": unity_meta.get("scenarioStepId", "")} if unity_meta else None,
         )
         fusion_session._prev_tension = tension
 
@@ -370,6 +391,23 @@ async def analyze_transcript_for_unity(
 
 fusion_session = FusionSession()
 recording_session = RecordingSession()
+audio_result_cache: "OrderedDict[Tuple[str, str], Dict[str, Any]]" = OrderedDict()
+audio_request_lock: Optional[asyncio.Lock] = None
+active_student_run_id = ""
+
+
+def get_audio_request_lock() -> asyncio.Lock:
+    global audio_request_lock
+    if audio_request_lock is None:
+        audio_request_lock = asyncio.Lock()
+    return audio_request_lock
+
+
+def cache_audio_result(key: Tuple[str, str], result: Dict[str, Any]) -> None:
+    audio_result_cache[key] = dict(result)
+    audio_result_cache.move_to_end(key)
+    while len(audio_result_cache) > AUDIO_REQUEST_CACHE_SIZE:
+        audio_result_cache.popitem(last=False)
 
 
 def reset_transcripts_file() -> None:
@@ -416,7 +454,7 @@ def reset_latest_emotion_state() -> None:
         "emotion": "neutral",
         "emotion_probs": {},
         "llm": {
-            "intent": "talk",
+            "intent": "neutral",
             "action_tag": "neutral",
             "sentiment": "neutral",
             "toxicity": 0.0,
@@ -426,7 +464,10 @@ def reset_latest_emotion_state() -> None:
         },
         "semantic_analysis": dict(DEFAULT_SEMANTIC_ANALYSIS),
         "tone_analysis": dict(DEFAULT_TONE_ANALYSIS),
-        "tension": 0.0,
+        "tension": INITIAL_TENSION,
+        "patienceScore": 100.0,
+        "kidEmotionState": "Calm",
+        "previousKidEmotionState": "Calm",
         "ts": "",
     })
 
@@ -477,14 +518,20 @@ async def get_current_experiment_session():
 
 @app.post("/api/student-runs/start")
 async def start_student_run(payload: StudentRunStart):
+    global active_student_run_id
     try:
         await asyncio.to_thread(student_result_service.ensure_active_session, payload.sessionId)
-        await fusion_session.reset()
-        reset_latest_emotion_state()
+        result_id = str(payload.resultId)
+        async with get_audio_request_lock():
+            if active_student_run_id != result_id:
+                await fusion_session.reset()
+                reset_latest_emotion_state()
+                audio_result_cache.clear()
+                active_student_run_id = result_id
         return {
             "ok": True,
             "sessionId": payload.sessionId,
-            "resultId": str(payload.resultId),
+            "resultId": result_id,
             "studentId": payload.studentId,
             "loginTime": isoformat_seconds(payload.loginTime),
         }
@@ -592,90 +639,182 @@ def synthesize_tts_wav(text: str, speaker: str = "") -> bytes:
         return wav_io.getvalue()
 
 
+async def transcribe_with_deepgram(wav: np.ndarray, sample_rate: int) -> DeepgramTranscriptResult:
+    """Send one normalized mono utterance through the existing Deepgram client."""
+    pcm16 = (np.clip(wav, -1.0, 1.0) * 32767.0).astype("<i2").tobytes()
+    session = DeepgramStreamingSession(sample_rate=sample_rate)
+    try:
+        await session.connect()
+        chunk_bytes = max(3200, sample_rate * 2)
+        for offset in range(0, len(pcm16), chunk_bytes):
+            await session.send_audio(pcm16[offset:offset + chunk_bytes])
+        return await session.finalize()
+    except DeepgramStreamingError:
+        raise
+    except Exception as error:
+        raise DeepgramStreamingError(str(error)) from error
+    finally:
+        await session.close()
+
+
 @app.post("/audio")
 async def upload_audio(request: Request):
-    """
-    直接接 Unity 丟來的 audio/wav 原始位元流
-    """
+    """Analyze one complete WAV utterance and return Unity's final result."""
     try:
+        started_at = time.perf_counter()
+        content_type = (request.headers.get("content-type") or "").lower()
+        if not content_type.startswith("audio/wav"):
+            raise HTTPException(status_code=415, detail="Content-Type must be audio/wav")
+
+        request_id = (request.headers.get("x-request-id") or "").strip()
+        scenario_step_id = (request.headers.get("x-scenario-step-id") or "").strip()
+        student_run_id = (request.headers.get("x-student-run-id") or "").strip()
+        missing = [
+            name for name, value in (
+                ("X-Request-Id", request_id),
+                ("X-Scenario-Step-Id", scenario_step_id),
+                ("X-Student-Run-Id", student_run_id),
+            ) if not value
+        ]
+        if missing:
+            raise HTTPException(status_code=400, detail=f"missing required header(s): {', '.join(missing)}")
+
         raw = await request.body()
         if not raw:
             raise HTTPException(status_code=400, detail="empty request body")
 
-        record_wav, record_sr = decode_wav_to_mono16k(raw, apply_preprocess=False)
-        await recording_session.append(record_wav, record_sr)
+        cache_key = (student_run_id, request_id)
+        async with get_audio_request_lock():
+            cached = audio_result_cache.get(cache_key)
+            if cached is not None:
+                audio_result_cache.move_to_end(cache_key)
+                duplicate = dict(cached)
+                duplicate["duplicate"] = True
+                return duplicate
 
-        wav, sr = decode_wav_to_mono16k(raw, apply_preprocess=True)
-        rms = compute_rms(wav)
-        peak = float(np.max(np.abs(wav))) if len(wav) > 0 else 0.0
-        print(f"[audio] bytes={len(raw)} samples={len(wav)} sr={sr} rms={rms:.6f} peak={peak:.6f} gate={ENERGY_GATE_RMS:.6f}")
+            if not active_student_run_id:
+                raise HTTPException(status_code=409, detail="student run has not been started")
+            if student_run_id != active_student_run_id:
+                raise HTTPException(status_code=409, detail="X-Student-Run-Id is not the active student run")
 
-        if rms < ENERGY_GATE_RMS:
-            now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-            fusion_res = {
-                "raw_text": "",
-                "text": "",
-                "emotion": "",
-                "emotion_probs": {},
-                "semantic_analysis": dict(DEFAULT_SEMANTIC_ANALYSIS),
-                "tone_analysis": dict(DEFAULT_TONE_ANALYSIS),
-                "asr": {"asr_confidence": 0.0, "language": "", "segment_count": 0, "rms": rms},
-                "llm": {"intent":"neutral","action_tag":"neutral","sentiment":"neutral","toxicity":0.0,"coercion":0.0,"confidence":0.0,"keywords":[]},
-                "tension": latest.get("tension", 0.0),
-                "ts": now
-            }
-            latest.update(fusion_res)
-            print("[audio] dropped: low_energy")
-            return {
+            record_wav, sr = await asyncio.to_thread(decode_wav_to_mono16k, raw, False)
+            await recording_session.append(record_wav, sr)
+            wav = await asyncio.to_thread(preprocess_audio, record_wav.copy())
+            rms = compute_rms(wav)
+            peak = float(np.max(np.abs(wav))) if len(wav) > 0 else 0.0
+            print(
+                f"[audio] request={request_id} bytes={len(raw)} samples={len(wav)} "
+                f"sr={sr} rms={rms:.6f} peak={peak:.6f} gate={ENERGY_GATE_RMS:.6f}"
+            )
+
+            previous_state = tension_to_kid_emotion_state(fusion_session._prev_tension)
+            analysis_published = False
+            if rms < ENERGY_GATE_RMS:
+                tension = fusion_session._prev_tension
+                fusion_res = {
+                    "text": "",
+                    "tension": tension,
+                    "patienceScore": tension_to_patience_score(tension),
+                    "previousKidEmotionState": previous_state,
+                    "kidEmotionState": previous_state,
+                    "llm": dict(DEFAULT_SEMANTIC_ANALYSIS),
+                    "ignored": True,
+                    "reason": "low_energy",
+                }
+            else:
+                try:
+                    deepgram_result = await transcribe_with_deepgram(wav, sr)
+                except DeepgramStreamingError as error:
+                    raise HTTPException(
+                        status_code=503,
+                        detail=f"Deepgram transcription unavailable: {error}",
+                    ) from error
+
+                transcript = (deepgram_result.text or "").strip()
+                if not transcript:
+                    tension = fusion_session._prev_tension
+                    fusion_res = {
+                        "text": "",
+                        "tension": tension,
+                        "patienceScore": tension_to_patience_score(tension),
+                        "previousKidEmotionState": previous_state,
+                        "kidEmotionState": previous_state,
+                        "llm": dict(DEFAULT_SEMANTIC_ANALYSIS),
+                        "ignored": True,
+                        "reason": "no_speech",
+                    }
+                else:
+                    fusion_res = dict(await analyze_transcript_for_unity(
+                        transcript,
+                        asr_meta={
+                            "provider": "deepgram",
+                            "model": os.getenv("DEEPGRAM_MODEL", "nova-3"),
+                            "language": deepgram_result.language,
+                            "asr_confidence": deepgram_result.confidence,
+                            "sample_rate": sr,
+                            "rms": rms,
+                        },
+                        unity_meta={
+                            "utteranceId": request_id,
+                            "scenarioStepId": scenario_step_id,
+                        },
+                    ))
+                    analysis_published = True
+
+            llm = fusion_res.get("llm", fusion_res.get("semantic_analysis", {})) or {}
+            tension = float(fusion_res.get("tension", fusion_session._prev_tension))
+            kid_state = fusion_res.get("kidEmotionState") or tension_to_kid_emotion_state(tension)
+            ignored = bool(fusion_res.get("ignored", False)) or not bool(
+                (fusion_res.get("text") or "").strip()
+            )
+            response = {
                 "ok": True,
-                "len": len(wav),
-                "sr": sr,
-                "text": "",
-                "raw_text": "",
-                "semantic_analysis": fusion_res["semantic_analysis"],
-                "tone_analysis": fusion_res["tone_analysis"],
-                "tension": fusion_res["tension"],
-                "reason": "low_energy",
-                "rms": rms,
-            }
-
-        fusion_res = await fusion_session.analyze(wav, sr)
-        fusion_res = dict(fusion_res)
-        fusion_res.setdefault("text", f"(voice {len(wav)/sr:.2f}s)")
-        fusion_res.setdefault("emotion_probs", {})
-        fusion_res.setdefault("asr", {})
-        fusion_res["asr"].setdefault("rms", rms)
-        fusion_res.setdefault("llm", {"intent":"explain","action_tag":"neutral","sentiment":"neutral","toxicity":0.0,"coercion":0.0,"confidence":0.0,"keywords":[]})
-        fusion_res["ts"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-        latest.update(fusion_res)
-        if (fusion_res.get("text", "") or fusion_res.get("raw_text", "")):
-            append_transcript_entry(fusion_res)
-
-        try:
-            summary = {
+                "ignored": ignored,
+                "duplicate": False,
+                "requestId": request_id,
+                "utteranceId": request_id,
+                "scenarioStepId": scenario_step_id,
+                "studentRunId": student_run_id,
+                "source": "student_speech",
                 "text": fusion_res.get("text", ""),
-                "emotion": fusion_res.get("emotion", ""),
-                "tension": fusion_res.get("tension", 0.0),
-                "intent": fusion_res.get("llm", {}).get("intent", "")
+                "tension": tension,
+                "patienceScore": tension_to_patience_score(tension),
+                "previousKidEmotionState": fusion_res.get("previousKidEmotionState", previous_state),
+                "kidEmotionState": kid_state,
+                "emotionState": kid_state,
+                "intent": llm.get("intent", "neutral"),
+                "actionTag": llm.get("action_tag", "neutral"),
+                "confidence": float(llm.get("confidence", 0.0) or 0.0),
+                "coercion": float(llm.get("coercion", 0.0) or 0.0),
+                "processingMs": round((time.perf_counter() - started_at) * 1000.0, 1),
             }
-            print("[fusion]", json.dumps(summary, ensure_ascii=False))
-        except Exception:
-            pass
+            if ignored:
+                response["reason"] = fusion_res.get("reason", "no_speech")
 
-        return {
-            "ok": True,
-            "len": len(wav),
-            "sr": sr,
-            "text": fusion_res.get("text", ""),
-            "raw_text": fusion_res.get("raw_text", ""),
-            "semantic_analysis": fusion_res.get("semantic_analysis", {}),
-            "tone_analysis": fusion_res.get("tone_analysis", {}),
-            "tension": fusion_res.get("tension", 0.0)
-        }
-    except HTTPException as e:
-        return JSONResponse(status_code=e.status_code, content={"ok": False, "error": str(e.detail)})
-    except Exception as e:
-        return JSONResponse(status_code=500, content={"ok": False, "error": str(e)})
+            fusion_res.update({
+                "source": "student_speech",
+                "utteranceId": request_id,
+                "scenarioStepId": scenario_step_id,
+                "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            })
+            if not analysis_published:
+                latest.update(fusion_res)
+                if not ignored:
+                    append_transcript_entry(fusion_res)
+
+            cache_audio_result(cache_key, response)
+            print("[fusion]", json.dumps({
+                "requestId": request_id,
+                "text": response["text"],
+                "tension": tension,
+                "intent": response["intent"],
+                "processingMs": response["processingMs"],
+            }, ensure_ascii=False))
+            return response
+    except HTTPException as error:
+        return JSONResponse(status_code=error.status_code, content={"ok": False, "error": str(error.detail)})
+    except Exception as error:
+        return JSONResponse(status_code=500, content={"ok": False, "error": str(error)})
 
 
 @app.post("/text")
