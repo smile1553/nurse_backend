@@ -6,6 +6,7 @@ import tempfile
 import threading
 import time
 import uuid
+from copy import copy
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
@@ -18,7 +19,7 @@ from openpyxl.utils import get_column_letter
 
 RESULT_SHEET = "學生結果"
 REQUEST_SHEET = "_requests"
-RESULT_HEADERS = ["登入時間", "學號", "答對題數", "題目分數", "語氣分數", "總分"]
+RESULT_HEADERS = ["登入時間", "學號", "答對題數", "題目分數", "語氣分數", "總分", "語音文字紀錄"]
 REQUEST_HEADERS = [
     "resultId",
     "payloadHash",
@@ -59,11 +60,13 @@ class ExcelResultService:
         self.output_dir = Path(output_dir).resolve()
         self.sessions_dir = self.output_dir / "sessions"
         self.locks_dir = self.output_dir / "locks"
+        self.transcripts_dir = self.output_dir / "transcripts"
         self.current_session_path = self.output_dir / "current_session.json"
         self.lock_timeout_seconds = lock_timeout_seconds
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.sessions_dir.mkdir(parents=True, exist_ok=True)
         self.locks_dir.mkdir(parents=True, exist_ok=True)
+        self.transcripts_dir.mkdir(parents=True, exist_ok=True)
         self._global_lock = threading.RLock()
         self._session_locks: Dict[str, threading.RLock] = {}
 
@@ -159,11 +162,25 @@ class ExcelResultService:
             except Exception as exc:
                 raise ResultServiceError("failed to open session workbook") from exc
 
+            result_sheet = workbook[RESULT_SHEET]
+            self._ensure_result_schema(result_sheet)
+            transcript_relative_path = self._ensure_transcript_file(
+                session_id,
+                normalized_result_id,
+                student_id,
+            )
+
             request_sheet = workbook[REQUEST_SHEET]
             duplicate = self._find_request(request_sheet, normalized_result_id)
             if duplicate is not None:
                 if duplicate["payloadHash"] != payload_hash:
                     raise IdempotencyConflictError("resultId was already used with different data")
+                self._set_transcript_link(
+                    result_sheet,
+                    duplicate["rowNumber"],
+                    transcript_relative_path,
+                )
+                self._save_workbook_atomic(workbook, workbook_path)
                 return {
                     "ok": True,
                     "duplicate": True,
@@ -175,7 +192,6 @@ class ExcelResultService:
                     "totalScore": duplicate["totalScore"],
                 }
 
-            result_sheet = workbook[RESULT_SHEET]
             result_sheet.append(
                 [
                     login_time,
@@ -184,11 +200,13 @@ class ExcelResultService:
                     f"{question_score}/80",
                     f"{tone_score}/20",
                     f"{total_score}/100",
+                    transcript_relative_path,
                 ]
             )
             row_number = result_sheet.max_row
             self._format_result_row(result_sheet, row_number)
-            result_sheet.auto_filter.ref = f"A1:F{row_number}"
+            self._set_transcript_link(result_sheet, row_number, transcript_relative_path)
+            result_sheet.auto_filter.ref = f"A1:G{row_number}"
 
             submitted_at = datetime.now().astimezone().isoformat(timespec="seconds")
             request_sheet.append(
@@ -224,7 +242,7 @@ class ExcelResultService:
         result_sheet.title = RESULT_SHEET
         result_sheet.append(RESULT_HEADERS)
         result_sheet.freeze_panes = "A2"
-        result_sheet.auto_filter.ref = "A1:F1"
+        result_sheet.auto_filter.ref = "A1:G1"
         result_sheet.sheet_view.showGridLines = False
 
         header_fill = PatternFill("solid", fgColor="1F4E78")
@@ -237,7 +255,7 @@ class ExcelResultService:
             cell.border = Border(right=thin_white)
         result_sheet.row_dimensions[1].height = 24
 
-        widths = [28, 18, 14, 14, 14, 14]
+        widths = [28, 18, 14, 14, 14, 14, 52]
         for index, width in enumerate(widths, start=1):
             result_sheet.column_dimensions[get_column_letter(index)].width = width
 
@@ -248,11 +266,11 @@ class ExcelResultService:
 
     @staticmethod
     def _format_result_row(sheet: Any, row_number: int) -> None:
-        for column in range(1, 7):
+        for column in range(1, 8):
             cell = sheet.cell(row=row_number, column=column)
             cell.font = Font(name="Arial", size=10)
             cell.alignment = Alignment(
-                horizontal="left" if column in (1, 2) else "center",
+                horizontal="left" if column in (1, 2, 7) else "center",
                 vertical="center",
             )
             cell.number_format = "@"
@@ -266,12 +284,116 @@ class ExcelResultService:
                 continue
             return {
                 "payloadHash": str(row[1]),
+                "rowNumber": int(row[2]),
                 "correctCount": int(row[6]),
                 "toneScore": int(row[7]),
                 "questionScore": int(row[8]),
                 "totalScore": int(row[9]),
             }
         return None
+
+    def prepare_student_transcript(
+        self,
+        session_id: str,
+        result_id: str,
+        student_id: str,
+    ) -> str:
+        """Create the portable per-student transcript file without overwriting retries."""
+        normalized_result_id = str(uuid.UUID(str(result_id)))
+        lock_path = self.locks_dir / f"transcript_{normalized_result_id}.lock"
+        with self._global_lock, self._file_lock(lock_path):
+            self.ensure_active_session(session_id)
+            return self._ensure_transcript_file(
+                session_id,
+                normalized_result_id,
+                student_id,
+            )
+
+    def append_student_transcript(
+        self,
+        session_id: str,
+        result_id: str,
+        student_id: str,
+        timestamp: str,
+        scenario_step_id: str,
+        request_id: str,
+        text: str,
+    ) -> str:
+        """Append one accepted /audio utterance to the matching student text file."""
+        normalized_result_id = str(uuid.UUID(str(result_id)))
+        lock_path = self.locks_dir / f"transcript_{normalized_result_id}.lock"
+        with self._global_lock, self._file_lock(lock_path):
+            self.ensure_active_session(session_id)
+            relative_path = self._ensure_transcript_file(
+                session_id,
+                normalized_result_id,
+                student_id,
+            )
+            transcript_path = self.output_dir / Path(relative_path)
+            clean_text = " ".join(str(text or "").splitlines()).strip()
+            if clean_text:
+                try:
+                    with transcript_path.open("a", encoding="utf-8") as transcript:
+                        transcript.write(
+                            f"[{timestamp}] step={scenario_step_id} requestId={request_id}\n"
+                            f"{clean_text}\n\n"
+                        )
+                        transcript.flush()
+                        os.fsync(transcript.fileno())
+                except OSError as exc:
+                    raise ResultServiceError("failed to append student transcript") from exc
+            return relative_path
+
+    def _transcript_relative_path(
+        self,
+        session_id: str,
+        result_id: str,
+        student_id: str,
+    ) -> Path:
+        self._validate_session_id(session_id)
+        normalized_result_id = str(uuid.UUID(str(result_id)))
+        safe_student_id = re.sub(r"[^A-Za-z0-9_-]+", "_", str(student_id).strip()).strip("_")
+        safe_student_id = safe_student_id[:80] or "student"
+        return Path("transcripts") / session_id / f"{safe_student_id}_{normalized_result_id[:8]}.txt"
+
+    def _ensure_transcript_file(
+        self,
+        session_id: str,
+        result_id: str,
+        student_id: str,
+    ) -> str:
+        relative_path = self._transcript_relative_path(session_id, result_id, student_id)
+        transcript_path = self.output_dir / relative_path
+        transcript_path.parent.mkdir(parents=True, exist_ok=True)
+        if not transcript_path.exists():
+            header = (
+                f"Student ID: {student_id}\n"
+                f"Session ID: {session_id}\n"
+                f"Result ID: {result_id}\n\n"
+            )
+            self._write_text_atomic(transcript_path, header)
+        return relative_path.as_posix()
+
+    @staticmethod
+    def _set_transcript_link(sheet: Any, row_number: int, relative_path: str) -> None:
+        cell = sheet.cell(row=row_number, column=7)
+        cell.value = relative_path
+        cell.hyperlink = relative_path
+        cell.style = "Hyperlink"
+        cell.alignment = Alignment(horizontal="left", vertical="center")
+
+    @staticmethod
+    def _ensure_result_schema(sheet: Any) -> None:
+        if sheet.cell(row=1, column=7).value != RESULT_HEADERS[6]:
+            source = sheet.cell(row=1, column=6)
+            target = sheet.cell(row=1, column=7)
+            target.value = RESULT_HEADERS[6]
+            target.fill = copy(source.fill)
+            target.font = copy(source.font)
+            target.alignment = copy(source.alignment)
+            target.border = copy(source.border)
+        sheet.column_dimensions["G"].width = 52
+        sheet.auto_filter.ref = f"A1:G{max(1, sheet.max_row)}"
 
     def _session_lock(self, session_id: str) -> threading.RLock:
         self._validate_session_id(session_id)
@@ -365,6 +487,29 @@ class ExcelResultService:
             os.replace(temporary_path, target)
         except Exception as exc:
             raise ResultServiceError("failed to save session metadata") from exc
+        finally:
+            if temporary_path is not None and temporary_path.exists():
+                temporary_path.unlink(missing_ok=True)
+
+    @staticmethod
+    def _write_text_atomic(target: Path, content: str) -> None:
+        temporary_path: Optional[Path] = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                prefix=f".{target.stem}_",
+                suffix=".txt",
+                dir=target.parent,
+                delete=False,
+                mode="w",
+                encoding="utf-8",
+            ) as temporary:
+                temporary.write(content)
+                temporary.flush()
+                os.fsync(temporary.fileno())
+                temporary_path = Path(temporary.name)
+            os.replace(temporary_path, target)
+        except Exception as exc:
+            raise ResultServiceError("failed to create student transcript") from exc
         finally:
             if temporary_path is not None and temporary_path.exists():
                 temporary_path.unlink(missing_ok=True)

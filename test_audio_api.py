@@ -29,6 +29,62 @@ def wav_bytes(amplitude: float) -> bytes:
     return output.getvalue()
 
 
+class DeepgramRestTransportTests(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self):
+        self.original_client = server_fusion.deepgram_http_client
+        self.original_key = server_fusion.deepgram_api_key
+        server_fusion.deepgram_api_key = "test-deepgram-key"
+
+    async def asyncTearDown(self):
+        test_client = server_fusion.deepgram_http_client
+        if test_client is not None and test_client is not self.original_client:
+            await test_client.aclose()
+        server_fusion.deepgram_http_client = self.original_client
+        server_fusion.deepgram_api_key = self.original_key
+
+    async def test_complete_wav_uses_rest_and_parses_transcript(self):
+        async def handler(request: httpx.Request) -> httpx.Response:
+            self.assertEqual(request.method, "POST")
+            self.assertEqual(str(request.url.copy_with(query=None)), server_fusion.DEEPGRAM_REST_URL)
+            self.assertEqual(request.headers["Content-Type"], "audio/wav")
+            self.assertEqual(request.headers["Authorization"], "Token test-deepgram-key")
+            self.assertEqual(request.url.params["model"], "nova-3")
+            self.assertEqual(request.url.params["language"], "zh")
+            self.assertTrue((await request.aread()).startswith(b"RIFF"))
+            return httpx.Response(200, json={
+                "metadata": {"request_id": "dg-1"},
+                "results": {"channels": [{"alternatives": [{
+                    "transcript": "test transcript",
+                    "confidence": 0.93,
+                    "detected_language": "zh",
+                }]}]},
+            })
+
+        server_fusion.deepgram_http_client = httpx.AsyncClient(
+            transport=httpx.MockTransport(handler)
+        )
+        result = await server_fusion.transcribe_with_deepgram(
+            np.full(1600, 0.1, dtype=np.float32), 16000
+        )
+        self.assertEqual(result.text, "test transcript")
+        self.assertEqual(result.language, "zh")
+        self.assertAlmostEqual(result.confidence, 0.93)
+        self.assertTrue(result.is_final)
+        self.assertTrue(result.speech_final)
+
+    async def test_rest_failure_is_reported_as_existing_deepgram_error(self):
+        async def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(503, json={"error": "temporarily unavailable"})
+
+        server_fusion.deepgram_http_client = httpx.AsyncClient(
+            transport=httpx.MockTransport(handler)
+        )
+        with self.assertRaises(DeepgramStreamingError):
+            await server_fusion.transcribe_with_deepgram(
+                np.full(1600, 0.1, dtype=np.float32), 16000
+            )
+
+
 class EmotionRuleTests(unittest.TestCase):
     def test_confidence_does_not_rewrite_intent(self):
         result = normalize_llm_output({"intent": "force", "confidence": 0.01})
@@ -60,6 +116,7 @@ class AudioApiTests(unittest.IsolatedAsyncioTestCase):
         server_fusion.audio_request_lock = None
         server_fusion.audio_result_cache.clear()
         server_fusion.active_student_run_id = ""
+        server_fusion.student_run_contexts.clear()
         server_fusion.fusion_session._lock = None
         server_fusion.fusion_session._prev_tension = -5.0
         server_fusion.fusion_session._history.clear()
@@ -160,10 +217,21 @@ class AudioApiTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(body["requestId"], "utterance-1")
             self.assertEqual(body["utteranceId"], "utterance-1")
             self.assertEqual(body["scenarioStepId"], "step-3")
+            self.assertEqual(body["studentRunId"], self.student_run_id)
             self.assertEqual(body["source"], "student_speech")
             self.assertEqual(body["intent"], "reassure")
             self.assertEqual(body["emotionState"], "Calm")
             self.assertIn("processingMs", body)
+            self.assertNotIn("timings", body)
+
+        context = server_fusion.student_run_contexts[self.student_run_id]
+        relative_path = server_fusion.student_result_service._transcript_relative_path(
+            context["sessionId"], self.student_run_id, context["studentId"]
+        )
+        transcript = (
+            server_fusion.student_result_service.output_dir / relative_path
+        ).read_text(encoding="utf-8")
+        self.assertEqual(transcript.count(first.json()["text"]), 1)
 
     async def test_deepgram_failure_returns_503_without_state_or_cache_update(self):
         calls = 0

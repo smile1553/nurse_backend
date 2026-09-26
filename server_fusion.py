@@ -4,6 +4,7 @@ from pathlib import Path
 from uuid import UUID
 import numpy as np
 import soundfile as sf
+import httpx
 from typing import Dict, Any, List, Tuple, Optional
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, HTTPException
 from fastapi.responses import JSONResponse, Response, FileResponse
@@ -11,6 +12,10 @@ from discovery import DiscoveryService
 import uvicorn
 from collections import OrderedDict, deque
 from deepgram_streaming import DeepgramStreamingError, DeepgramStreamingSession, DeepgramTranscriptResult
+from env_config import (
+    DEEPGRAM_API_KEY_TEMPLATE_VALUE,
+    read_api_key,
+)
 
 from fusion_loop import (
     fuse_once,
@@ -62,6 +67,10 @@ VOICE_MAX_UTTERANCE_SEC = float(os.getenv("VOICE_MAX_UTTERANCE_SEC", "20.0"))
 VOICE_MIN_AUDIO_MS = float(os.getenv("VOICE_MIN_AUDIO_MS", "200"))
 AUDIO_REQUEST_CACHE_SIZE = max(1, int(os.getenv("AUDIO_REQUEST_CACHE_SIZE", "256")))
 INITIAL_TENSION = -5.0
+DEEPGRAM_REST_URL = "https://api.deepgram.com/v1/listen"
+DEEPGRAM_REST_TIMEOUT_SEC = float(os.getenv("DEEPGRAM_REST_TIMEOUT_SEC", "10.0"))
+deepgram_api_key = read_api_key("DEEPGRAM_API_KEY", DEEPGRAM_API_KEY_TEMPLATE_VALUE)
+deepgram_http_client: Optional[httpx.AsyncClient] = None
 
 
 
@@ -376,7 +385,7 @@ async def analyze_transcript_for_unity(
     fusion_res["previousKidEmotionState"] = previous_kid_emotion_state
     fusion_res["stage"] = _tension_to_stage(fusion_res.get("tension", 0.0))
     if unity_meta:
-        for key in ("utteranceId", "scenarioStepId", "scenarioStepIndex"):
+        for key in ("utteranceId", "scenarioStepId", "scenarioStepIndex", "studentRunId"):
             if key in unity_meta:
                 fusion_res[key] = unity_meta[key]
     if asr_meta:
@@ -394,6 +403,7 @@ recording_session = RecordingSession()
 audio_result_cache: "OrderedDict[Tuple[str, str], Dict[str, Any]]" = OrderedDict()
 audio_request_lock: Optional[asyncio.Lock] = None
 active_student_run_id = ""
+student_run_contexts: Dict[str, Dict[str, str]] = {}
 
 
 def get_audio_request_lock() -> asyncio.Lock:
@@ -439,12 +449,38 @@ def append_transcript_entry(data: Dict[str, Any]) -> None:
         "asr_language": data.get("asr", {}).get("language"),
         "asr_segments": data.get("asr", {}).get("segment_count"),
         "asr_rms": data.get("asr", {}).get("rms"),
+        "requestId": data.get("utteranceId", ""),
+        "scenarioStepId": data.get("scenarioStepId", ""),
+        "studentRunId": data.get("studentRunId", ""),
     }
     try:
         with open(TRANSCRIPT_PATH, "a", encoding="utf-8") as fp:
             fp.write(json.dumps(entry, ensure_ascii=False) + "\n")
     except OSError as e:
         print(f"[fusion] failed to append transcript: {e}")
+
+
+
+def append_current_student_transcript(data: Dict[str, Any]) -> None:
+    student_run_id = str(data.get("studentRunId") or "").strip()
+    context = student_run_contexts.get(student_run_id)
+    text = str(data.get("text") or "").strip()
+    if not context or not text:
+        return
+    try:
+        student_result_service.append_student_transcript(
+            context["sessionId"],
+            student_run_id,
+            context["studentId"],
+            str(data.get("ts") or time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())),
+            str(data.get("scenarioStepId") or ""),
+            str(data.get("utteranceId") or ""),
+            text,
+        )
+    except ResultServiceError as error:
+        # Emotion was already calculated; do not turn a transcript I/O problem into
+        # an /audio retry that could apply the same utterance twice.
+        print(f"[student_results] failed to append student transcript: {error}")
 
 
 def reset_latest_emotion_state() -> None:
@@ -522,12 +558,24 @@ async def start_student_run(payload: StudentRunStart):
     try:
         await asyncio.to_thread(student_result_service.ensure_active_session, payload.sessionId)
         result_id = str(payload.resultId)
+        await asyncio.to_thread(
+            student_result_service.prepare_student_transcript,
+            payload.sessionId,
+            result_id,
+            payload.studentId,
+        )
         async with get_audio_request_lock():
             if active_student_run_id != result_id:
                 await fusion_session.reset()
                 reset_latest_emotion_state()
                 audio_result_cache.clear()
+                student_run_contexts.clear()
                 active_student_run_id = result_id
+            student_run_contexts[result_id] = {
+                "sessionId": payload.sessionId,
+                "studentId": payload.studentId,
+                "loginTime": isoformat_seconds(payload.loginTime),
+            }
         return {
             "ok": True,
             "sessionId": payload.sessionId,
@@ -639,22 +687,76 @@ def synthesize_tts_wav(text: str, speaker: str = "") -> bytes:
         return wav_io.getvalue()
 
 
+def get_deepgram_http_client() -> httpx.AsyncClient:
+    """Return one pooled client for all complete-utterance REST requests."""
+    global deepgram_http_client
+    if deepgram_http_client is None or deepgram_http_client.is_closed:
+        deepgram_http_client = httpx.AsyncClient(
+            timeout=httpx.Timeout(DEEPGRAM_REST_TIMEOUT_SEC),
+            limits=httpx.Limits(max_connections=10, max_keepalive_connections=5),
+        )
+    return deepgram_http_client
+
+
+def encode_pcm16_wav(wav: np.ndarray, sample_rate: int) -> bytes:
+    output = io.BytesIO()
+    sf.write(
+        output,
+        np.asarray(wav, dtype=np.float32),
+        int(sample_rate),
+        format="WAV",
+        subtype="PCM_16",
+    )
+    return output.getvalue()
+
+
 async def transcribe_with_deepgram(wav: np.ndarray, sample_rate: int) -> DeepgramTranscriptResult:
-    """Send one normalized mono utterance through the existing Deepgram client."""
-    pcm16 = (np.clip(wav, -1.0, 1.0) * 32767.0).astype("<i2").tobytes()
-    session = DeepgramStreamingSession(sample_rate=sample_rate)
+    """Send one complete normalized WAV through Deepgram's pre-recorded REST API."""
+    if not deepgram_api_key:
+        raise DeepgramStreamingError("DEEPGRAM_API_KEY is missing")
+
+    params: List[Tuple[str, str]] = [
+        ("model", os.getenv("DEEPGRAM_MODEL", "nova-3").strip()),
+        ("language", os.getenv("DEEPGRAM_LANGUAGE", "zh").strip()),
+        ("punctuate", "true"),
+        ("smart_format", "false"),
+    ]
+    params.extend(
+        ("keyterm", term.strip())
+        for term in os.getenv("DEEPGRAM_KEYTERMS", "").split(",")
+        if term.strip()
+    )
+
     try:
-        await session.connect()
-        chunk_bytes = max(3200, sample_rate * 2)
-        for offset in range(0, len(pcm16), chunk_bytes):
-            await session.send_audio(pcm16[offset:offset + chunk_bytes])
-        return await session.finalize()
-    except DeepgramStreamingError:
-        raise
-    except Exception as error:
-        raise DeepgramStreamingError(str(error)) from error
-    finally:
-        await session.close()
+        response = await get_deepgram_http_client().post(
+            DEEPGRAM_REST_URL,
+            params=params,
+            headers={
+                "Authorization": f"Token {deepgram_api_key}",
+                "Content-Type": "audio/wav",
+            },
+            content=encode_pcm16_wav(wav, sample_rate),
+        )
+        response.raise_for_status()
+        payload = response.json()
+        channels = ((payload.get("results") or {}).get("channels") or [])
+        alternatives = ((channels[0] or {}).get("alternatives") or []) if channels else []
+        best = alternatives[0] if alternatives else {}
+        metadata = payload.get("metadata") or {}
+        detected_language = best.get("detected_language") or best.get("language") or ""
+        if not detected_language:
+            detected_language = os.getenv("DEEPGRAM_LANGUAGE", "zh").strip()
+
+        return DeepgramTranscriptResult(
+            text=(best.get("transcript") or "").strip(),
+            confidence=float(best.get("confidence") or 0.0),
+            language=str(detected_language),
+            is_final=True,
+            speech_final=True,
+            raw_messages=[{"metadata": metadata, "channel": channels[0] if channels else {}}],
+        )
+    except (httpx.HTTPError, ValueError, TypeError, KeyError) as error:
+        raise DeepgramStreamingError(f"Deepgram REST request failed: {error}") from error
 
 
 @app.post("/audio")
@@ -684,7 +786,20 @@ async def upload_audio(request: Request):
             raise HTTPException(status_code=400, detail="empty request body")
 
         cache_key = (student_run_id, request_id)
+        timings = {
+            "queueWaitMs": 0.0,
+            "decodeMs": 0.0,
+            "recordingWriteMs": 0.0,
+            "preprocessMs": 0.0,
+            "deepgramMs": 0.0,
+            "semanticMs": 0.0,
+            "transcriptWriteMs": 0.0,
+        }
+        lock_wait_started = time.perf_counter()
         async with get_audio_request_lock():
+            timings["queueWaitMs"] = round(
+                (time.perf_counter() - lock_wait_started) * 1000.0, 1
+            )
             cached = audio_result_cache.get(cache_key)
             if cached is not None:
                 audio_result_cache.move_to_end(cache_key)
@@ -697,9 +812,21 @@ async def upload_audio(request: Request):
             if student_run_id != active_student_run_id:
                 raise HTTPException(status_code=409, detail="X-Student-Run-Id is not the active student run")
 
+            phase_started = time.perf_counter()
             record_wav, sr = await asyncio.to_thread(decode_wav_to_mono16k, raw, False)
+            timings["decodeMs"] = round((time.perf_counter() - phase_started) * 1000.0, 1)
+
+            phase_started = time.perf_counter()
             await recording_session.append(record_wav, sr)
+            timings["recordingWriteMs"] = round(
+                (time.perf_counter() - phase_started) * 1000.0, 1
+            )
+
+            phase_started = time.perf_counter()
             wav = await asyncio.to_thread(preprocess_audio, record_wav.copy())
+            timings["preprocessMs"] = round(
+                (time.perf_counter() - phase_started) * 1000.0, 1
+            )
             rms = compute_rms(wav)
             peak = float(np.max(np.abs(wav))) if len(wav) > 0 else 0.0
             print(
@@ -723,7 +850,11 @@ async def upload_audio(request: Request):
                 }
             else:
                 try:
+                    phase_started = time.perf_counter()
                     deepgram_result = await transcribe_with_deepgram(wav, sr)
+                    timings["deepgramMs"] = round(
+                        (time.perf_counter() - phase_started) * 1000.0, 1
+                    )
                 except DeepgramStreamingError as error:
                     raise HTTPException(
                         status_code=503,
@@ -744,6 +875,7 @@ async def upload_audio(request: Request):
                         "reason": "no_speech",
                     }
                 else:
+                    phase_started = time.perf_counter()
                     fusion_res = dict(await analyze_transcript_for_unity(
                         transcript,
                         asr_meta={
@@ -757,8 +889,12 @@ async def upload_audio(request: Request):
                         unity_meta={
                             "utteranceId": request_id,
                             "scenarioStepId": scenario_step_id,
+                            "studentRunId": student_run_id,
                         },
                     ))
+                    timings["semanticMs"] = round(
+                        (time.perf_counter() - phase_started) * 1000.0, 1
+                    )
                     analysis_published = True
 
             llm = fusion_res.get("llm", fusion_res.get("semantic_analysis", {})) or {}
@@ -795,13 +931,24 @@ async def upload_audio(request: Request):
                 "source": "student_speech",
                 "utteranceId": request_id,
                 "scenarioStepId": scenario_step_id,
+                "studentRunId": student_run_id,
                 "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             })
             if not analysis_published:
                 latest.update(fusion_res)
                 if not ignored:
                     append_transcript_entry(fusion_res)
+            if not ignored:
+                phase_started = time.perf_counter()
+                await asyncio.to_thread(append_current_student_transcript, fusion_res)
+                timings["transcriptWriteMs"] = round(
+                    (time.perf_counter() - phase_started) * 1000.0, 1
+                )
 
+            response["processingMs"] = round(
+                (time.perf_counter() - started_at) * 1000.0,
+                1,
+            )
             cache_audio_result(cache_key, response)
             print("[fusion]", json.dumps({
                 "requestId": request_id,
@@ -809,6 +956,7 @@ async def upload_audio(request: Request):
                 "tension": tension,
                 "intent": response["intent"],
                 "processingMs": response["processingMs"],
+                "timings": timings,
             }, ensure_ascii=False))
             return response
     except HTTPException as error:
@@ -1215,6 +1363,10 @@ async def on_start():
 @app.on_event("shutdown")
 async def on_shutdown():
     await discovery_service.stop()
+    global deepgram_http_client
+    if deepgram_http_client is not None and not deepgram_http_client.is_closed:
+        await deepgram_http_client.aclose()
+    deepgram_http_client = None
 
 if __name__ == "__main__":
     # 0.0.0.0 讓區網裝置（Quest）可連；port 可自訂

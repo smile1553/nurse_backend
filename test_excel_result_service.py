@@ -64,9 +64,9 @@ class ExcelResultServiceTests(unittest.TestCase):
         self.assertEqual(result["totalScore"], 88)
 
         workbook = load_workbook(self.workbook_path(), data_only=False)
-        values = [workbook[RESULT_SHEET].cell(2, column).value for column in range(1, 7)]
+        values = [workbook[RESULT_SHEET].cell(2, column).value for column in range(1, 8)]
         self.assertEqual(
-            values,
+            values[:6],
             [
                 "2026-09-21T18:30:00+08:00",
                 "412345678",
@@ -76,6 +76,33 @@ class ExcelResultServiceTests(unittest.TestCase):
                 "88/100",
             ],
         )
+        self.assertTrue(values[6].startswith(f"transcripts/{self.session['sessionId']}/412345678_"))
+        transcript_path = self.output_dir / Path(values[6])
+        self.assertTrue(transcript_path.exists())
+        self.assertEqual(workbook[RESULT_SHEET]["G2"].hyperlink.target, values[6])
+
+    def test_transcript_uses_portable_relative_path_and_appends_text(self):
+        result_id = str(uuid.uuid4())
+        relative_path = self.service.prepare_student_transcript(
+            self.session["sessionId"], result_id, "412345678"
+        )
+        self.assertFalse(Path(relative_path).is_absolute())
+        self.assertIn("412345678_", Path(relative_path).name)
+
+        self.service.append_student_transcript(
+            self.session["sessionId"],
+            result_id,
+            "412345678",
+            "2026-09-21T10:35:10+08:00",
+            "step-3",
+            "utterance-1",
+            "不用怕，一下就好了",
+        )
+        transcript = (self.output_dir / relative_path).read_text(encoding="utf-8")
+        self.assertIn("Student ID: 412345678", transcript)
+        self.assertIn("step=step-3", transcript)
+        self.assertIn("requestId=utterance-1", transcript)
+        self.assertIn("不用怕，一下就好了", transcript)
 
     def test_student_id_is_stored_as_text_not_formula(self):
         self.append(student_id="=1+1")

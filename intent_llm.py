@@ -169,8 +169,14 @@ def load_api_key() -> Optional[str]:
 
 api_key = load_api_key()
 if api_key:
-    openai.api_key = api_key
+    # One explicit client keeps its HTTP connection pool across utterances.
+    # Output length remains unrestricted to avoid truncating the required JSON.
+    openai_client = openai.OpenAI(
+        api_key=api_key,
+        timeout=LLM_TIMEOUT_SEC,
+    )
 else:
+    openai_client = None
     print("[intent_llm] API key missing, fallback mode enabled.")
 
 
@@ -316,7 +322,7 @@ def normalize_llm_output(data: dict) -> dict:
 
 
 def analyze_intent(recent_utterances: list[str], current: str, context: Optional[Dict[str, Any]] = None) -> dict:
-    if not api_key:
+    if openai_client is None:
         return FALLBACK.copy()
 
     prev = ""
@@ -342,11 +348,10 @@ def analyze_intent(recent_utterances: list[str], current: str, context: Optional
         {"role": "user", "content": json.dumps(user_payload, ensure_ascii=False)}
     ]
     try:
-        resp = openai.chat.completions.create(
+        resp = openai_client.chat.completions.create(
             model=LLM_MODEL,
             messages=messages,
             temperature=0,
-            timeout=LLM_TIMEOUT_SEC,
         )
         txt = resp.choices[0].message.content
         raw = _extract_json_object(txt)
