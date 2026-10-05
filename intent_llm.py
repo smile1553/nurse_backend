@@ -15,6 +15,7 @@ LLM_MODEL = os.getenv("LLM_MODEL", "gpt-4o-mini")
 LLM_TIMEOUT_SEC = float(os.getenv("LLM_TIMEOUT_SEC", "2.5"))
 LLM_CACHE_SIZE = int(os.getenv("LLM_CACHE_SIZE", "256"))
 _LLM_CACHE = OrderedDict()
+TOXIC_AS_THREAT_MIN = float(os.getenv("TOXIC_AS_THREAT_MIN", "0.6"))
 API_KEY_TEMPLATE_VALUE = OPENAI_API_KEY_TEMPLATE_VALUE
 
 
@@ -194,7 +195,10 @@ SYSTEM_PROMPT = (
     "你是兒科護理情境的語言分析器。請使用 previous_utterance 理解 current_utterance，"
     "但只根據 current_utterance 選擇一個 intent："
     "reassure、encourage、neutral、command、force、threat。"
-    "force 表示強迫行為，threat 表示威脅後果。只判斷 intent，不計算 tension、patience或emotion。"
+    "force 表示強迫行為，threat 表示威脅後果。"
+    "辱罵、貶低、嘲笑、責罵或對孩子、家屬發脾氣的話（例如「你是白癡嗎」「吵死了」「煩不煩」）"
+    "即使沒有提到後果，也一律歸為 threat，並給高 toxicity。"
+    "只判斷 intent，不計算 tension、patience或emotion。"
     "action_tag 要選最貼近教案步驟的細分類。"
     "action_tag 優先從以下集合選擇：introduce_bp_exam、explain_resp_first、calm_guidance、ask_preference、engagement_strategy、"
     "role_play_demo、reduce_fear、praise_child、transition_to_temp、reassure_child、delay_temp_exam、role_play_temp、"
@@ -317,6 +321,11 @@ def normalize_llm_output(data: dict) -> dict:
     base["coercion"] = max(0.0, min(1.0, _to_float(data.get("coercion", 0.0))))
     base["confidence"] = max(0.0, min(1.0, _to_float(data.get("confidence", 0.0))))
     base["keywords"] = _normalize_keywords(data.get("keywords", []))
+
+    # Safety net: abusive speech that the model still labelled as harmless must not leave
+    # the child's tension untouched. Treated like a threat so Unity needs no new intent.
+    if base["toxicity"] >= TOXIC_AS_THREAT_MIN and base["intent"] in ("neutral", "reassure", "encourage"):
+        base["intent"] = "threat"
 
     return base
 

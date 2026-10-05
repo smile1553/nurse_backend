@@ -10,7 +10,8 @@ from copy import copy
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, Iterator, Optional
+import report_builder
+from typing import Any, Dict, Iterator, List, Optional
 
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
@@ -33,6 +34,7 @@ REQUEST_HEADERS = [
     "totalScore",
 ]
 SESSION_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,80}$")
+DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 
 class ResultServiceError(Exception):
@@ -132,18 +134,30 @@ class ExcelResultService:
         login_time: str,
         correct_count: int,
         tone_score: int,
+        question_score: Optional[int] = None,
+        items: Optional[List[Dict[str, Any]]] = None,
+        steps: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
+        # "items" (per-question details for the feedback report) is deliberately NOT part of
+        # the fingerprint below: a retry that lost the details must still count as the same result.
         normalized_result_id = str(uuid.UUID(str(result_id)))
+        if question_score is not None and not 0 <= int(question_score) <= 80:
+            raise ResultServiceError("questionScore must be between 0 and 80")
         payload = {
             "studentId": student_id,
             "loginTime": login_time,
             "correctCount": correct_count,
             "toneScore": tone_score,
         }
+        # Only part of the fingerprint when it was sent, so results submitted by an older
+        # Unity build (without questionScore) keep the same fingerprint on a retry.
+        if question_score is not None:
+            payload["questionScore"] = int(question_score)
         payload_hash = hashlib.sha256(
             json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
         ).hexdigest()
-        question_score = correct_count * 10
+        # Detailed score from Unity when given; otherwise the original rule.
+        question_score = int(question_score) if question_score is not None else correct_count * 10
         total_score = question_score + tone_score
 
         thread_lock = self._session_lock(session_id)
@@ -181,6 +195,19 @@ class ExcelResultService:
                     transcript_relative_path,
                 )
                 self._save_workbook_atomic(workbook, workbook_path)
+                self._write_student_file(
+                    login_time,
+                    student_id,
+                    normalized_result_id,
+                    session_id,
+                    duplicate["correctCount"],
+                    duplicate["questionScore"],
+                    duplicate["toneScore"],
+                    duplicate["totalScore"],
+                    transcript_relative_path,
+                    items,
+                    steps,
+                )
                 return {
                     "ok": True,
                     "duplicate": True,
@@ -225,6 +252,19 @@ class ExcelResultService:
             )
 
             self._save_workbook_atomic(workbook, workbook_path)
+            self._write_student_file(
+                login_time,
+                student_id,
+                normalized_result_id,
+                session_id,
+                correct_count,
+                question_score,
+                tone_score,
+                total_score,
+                transcript_relative_path,
+                items,
+                steps,
+            )
             return {
                 "ok": True,
                 "duplicate": False,
@@ -235,6 +275,112 @@ class ExcelResultService:
                 "toneScore": tone_score,
                 "totalScore": total_score,
             }
+
+    def student_file_relative_path(self, login_time: str, result_id: str, student_id: str) -> Path:
+        """<date>/<studentId>_<resultId8>.txt, the date being the student's login date."""
+        normalized_result_id = str(uuid.UUID(str(result_id)))
+        date_text = str(login_time or "")[:10]
+        if not DATE_RE.fullmatch(date_text):
+            date_text = f"{datetime.now().astimezone():%Y-%m-%d}"
+        return Path(date_text) / f"{self._safe_student_id(student_id)}_{normalized_result_id[:8]}.txt"
+
+    def _write_student_file(
+        self,
+        login_time: str,
+        student_id: str,
+        result_id: str,
+        session_id: str,
+        correct_count: int,
+        question_score: int,
+        tone_score: int,
+        total_score: int,
+        transcript_relative_path: str,
+        items: Optional[List[Dict[str, Any]]] = None,
+        steps: Optional[List[Dict[str, Any]]] = None,
+    ) -> None:
+        """One readable file per student inside a folder named after the date.
+
+        The session workbook stays the record of truth; a failure here is only logged so
+        the student's result is never lost because of it.
+        """
+        try:
+            target = self.output_dir / self.student_file_relative_path(login_time, result_id, student_id)
+            target.parent.mkdir(parents=True, exist_ok=True)
+
+            # Kept from the first submission, so a retry does not change them.
+            data_path = target.with_suffix(".json")
+            earlier: Dict[str, Any] = {}
+            if data_path.exists():
+                try:
+                    earlier = json.loads(data_path.read_text(encoding="utf-8"))
+                except (OSError, json.JSONDecodeError):
+                    earlier = {}
+            items = items or earlier.get("items") or []
+            steps = steps or earlier.get("steps") or []
+            submitted_at = earlier.get("submittedAt") or datetime.now().astimezone().isoformat(timespec="seconds")
+            duration_seconds = report_builder.practice_seconds(login_time, submitted_at, steps)
+
+            spoken = ""
+            transcript_path = self.output_dir / Path(transcript_relative_path)
+            if transcript_path.exists():
+                text = transcript_path.read_text(encoding="utf-8")
+                # Skip the transcript's own header (ends with the first blank line).
+                spoken = text.split("\n\n", 1)[1].strip() if "\n\n" in text else ""
+
+            content = (
+                f"學號：{student_id}\n"
+                f"登入時間：{login_time}\n"
+                f"Session ID：{session_id}\n"
+                f"Result ID：{result_id}\n"
+                "\n"
+                f"答對題數：{correct_count}/8\n"
+                f"題目分數：{question_score}/80\n"
+                f"語氣分數：{tone_score}/20\n"
+                f"總分：{total_score}/100\n"
+                "\n"
+                f"完成時間：{submitted_at}\n"
+                f"練習時間：{report_builder.clock_text(duration_seconds)}\n"
+                f"{report_builder.steps_text(steps)}"
+                "\n"
+                "語音文字紀錄：\n"
+                f"{spoken or '（無）'}\n"
+            )
+            self._write_text_atomic(target, content)
+        except Exception as error:
+            print(f"[student_results] failed to write student file: {error}")
+            return
+
+        # Feedback report for the student and the overview of that day (see report_builder).
+        try:
+            record = {
+                "studentId": student_id,
+                "loginTime": login_time,
+                "sessionId": session_id,
+                "resultId": result_id,
+                "correctCount": correct_count,
+                "questionScore": question_score,
+                "toneScore": tone_score,
+                "totalScore": total_score,
+                "items": items or [],
+                "steps": steps or [],
+                "submittedAt": submitted_at,
+                "durationSeconds": duration_seconds,
+                "utterances": report_builder.read_utterances(transcript_path.with_suffix(".jsonl")),
+                "reportFile": target.with_suffix(".html").name,
+            }
+            self._write_json_atomic(data_path, record)
+            self._write_text_atomic(target.with_suffix(".html"), report_builder.student_report_html(record))
+            self._write_text_atomic(
+                target.parent / "index.html",
+                report_builder.overview_html(target.parent.name, report_builder.load_records(target.parent)),
+            )
+        except Exception as error:
+            print(f"[student_results] failed to write feedback report: {error}")
+
+    @staticmethod
+    def _safe_student_id(student_id: str) -> str:
+        safe = re.sub(r"[^A-Za-z0-9_-]+", "_", str(student_id).strip()).strip("_")
+        return safe[:80] or "student"
 
     def _new_workbook(self) -> Workbook:
         workbook = Workbook()
@@ -318,8 +464,13 @@ class ExcelResultService:
         scenario_step_id: str,
         request_id: str,
         text: str,
+        details: Optional[Dict[str, Any]] = None,
     ) -> str:
-        """Append one accepted /audio utterance to the matching student text file."""
+        """Append one accepted /audio utterance to the matching student text file.
+
+        "details" (intent, tension, emotion state...) goes to a .jsonl file beside it, one
+        JSON object per line; the feedback report draws the emotion curve from it.
+        """
         normalized_result_id = str(uuid.UUID(str(result_id)))
         lock_path = self.locks_dir / f"transcript_{normalized_result_id}.lock"
         with self._global_lock, self._file_lock(lock_path):
@@ -342,6 +493,14 @@ class ExcelResultService:
                         os.fsync(transcript.fileno())
                 except OSError as exc:
                     raise ResultServiceError("failed to append student transcript") from exc
+                try:
+                    line = {"ts": timestamp, "step": scenario_step_id, "requestId": request_id, "text": clean_text}
+                    line.update(details or {})
+                    with transcript_path.with_suffix(".jsonl").open("a", encoding="utf-8") as detail_file:
+                        detail_file.write(json.dumps(line, ensure_ascii=False) + "\n")
+                except (OSError, TypeError, ValueError) as error:
+                    # The text file above is the record; the report just loses this point.
+                    print(f"[student_results] failed to append transcript details: {error}")
             return relative_path
 
     def _transcript_relative_path(
@@ -352,8 +511,7 @@ class ExcelResultService:
     ) -> Path:
         self._validate_session_id(session_id)
         normalized_result_id = str(uuid.UUID(str(result_id)))
-        safe_student_id = re.sub(r"[^A-Za-z0-9_-]+", "_", str(student_id).strip()).strip("_")
-        safe_student_id = safe_student_id[:80] or "student"
+        safe_student_id = self._safe_student_id(student_id)
         return Path("transcripts") / session_id / f"{safe_student_id}_{normalized_result_id[:8]}.txt"
 
     def _ensure_transcript_file(

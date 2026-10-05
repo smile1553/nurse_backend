@@ -1,5 +1,6 @@
 # server_fusion.py
-import asyncio, json, time, io, os, tempfile, subprocess
+import asyncio, json, re, time, io, os, tempfile, subprocess
+from datetime import datetime
 from pathlib import Path
 from uuid import UUID
 import numpy as np
@@ -7,7 +8,7 @@ import soundfile as sf
 import httpx
 from typing import Dict, Any, List, Tuple, Optional
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, HTTPException
-from fastapi.responses import JSONResponse, Response, FileResponse
+from fastapi.responses import JSONResponse, Response, FileResponse, RedirectResponse
 from discovery import DiscoveryService
 import uvicorn
 from collections import OrderedDict, deque
@@ -40,7 +41,16 @@ from excel_result_service import (
     SessionNotFoundError,
     StorageBusyError,
 )
-from result_models import StudentResultSubmission, StudentRunStart, isoformat_seconds
+from result_models import StudentResultSubmission, StudentRunStart, clean_result_items, clean_result_steps, isoformat_seconds
+
+def local_timestamp() -> str:
+    """Now, in this computer's own time zone, e.g. 2026-10-05T00:12:03+08:00.
+
+    Sentence times used to be written in UTC (ending in Z), 8 hours behind the login time
+    shown next to them in Taiwan.
+    """
+    return datetime.now().astimezone().isoformat(timespec="seconds")
+
 
 OUT_DIR = Path(__file__).resolve().parent / "out"
 OUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -380,7 +390,7 @@ async def analyze_transcript_for_unity(
             fusion_session._history.append(text)
 
     fusion_res = dict(fusion_res)
-    fusion_res["ts"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    fusion_res["ts"] = local_timestamp()
     fusion_res["source"] = "student_speech"
     fusion_res["previousKidEmotionState"] = previous_kid_emotion_state
     fusion_res["stage"] = _tension_to_stage(fusion_res.get("tension", 0.0))
@@ -432,7 +442,7 @@ def reset_transcripts_file() -> None:
 
 def append_transcript_entry(data: Dict[str, Any]) -> None:
     entry = {
-        "ts": data.get("ts") or time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "ts": data.get("ts") or local_timestamp(),
         "text": data.get("text", ""),
         "raw_text": data.get("raw_text", ""),
         "emotion": data.get("emotion", ""),
@@ -467,15 +477,24 @@ def append_current_student_transcript(data: Dict[str, Any]) -> None:
     text = str(data.get("text") or "").strip()
     if not context or not text:
         return
+    semantic = data.get("semantic_analysis") or data.get("llm") or {}
     try:
         student_result_service.append_student_transcript(
             context["sessionId"],
             student_run_id,
             context["studentId"],
-            str(data.get("ts") or time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())),
+            str(data.get("ts") or local_timestamp()),
             str(data.get("scenarioStepId") or ""),
             str(data.get("utteranceId") or ""),
             text,
+            {
+                "intent": semantic.get("intent"),
+                "toxicity": semantic.get("toxicity"),
+                "coercion": semantic.get("coercion"),
+                "tension": data.get("tension"),
+                "kidEmotionState": data.get("kidEmotionState"),
+                "previousKidEmotionState": data.get("previousKidEmotionState"),
+            },
         )
     except ResultServiceError as error:
         # Emotion was already calculated; do not turn a transcript I/O problem into
@@ -602,11 +621,16 @@ async def submit_student_result(
             isoformat_seconds(payload.loginTime),
             payload.correctCount,
             payload.toneScore,
+            payload.questionScore,
+            clean_result_items(payload.items) or None,
+            clean_result_steps(payload.steps) or None,
         )
         print(
             "[student_results] "
             f"session={session_id} result={result_id} duplicate={result['duplicate']} "
-            f"total={result['totalScore']}"
+            f"student={payload.studentId} received: correctCount={payload.correctCount} "
+            f"toneScore={payload.toneScore} questionScore={payload.questionScore} "
+            f"-> question={result['questionScore']} total={result['totalScore']}"
         )
         return result
     except ResultServiceError as error:
@@ -781,12 +805,16 @@ async def upload_audio(request: Request):
         if missing:
             raise HTTPException(status_code=400, detail=f"missing required header(s): {', '.join(missing)}")
 
+        body_started = time.perf_counter()
         raw = await request.body()
+        body_read_ms = round((time.perf_counter() - body_started) * 1000.0, 1)
         if not raw:
             raise HTTPException(status_code=400, detail="empty request body")
 
         cache_key = (student_run_id, request_id)
         timings = {
+            # Time spent receiving the WAV from the headset (slow Wi-Fi shows up here).
+            "bodyReadMs": body_read_ms,
             "queueWaitMs": 0.0,
             "decodeMs": 0.0,
             "recordingWriteMs": 0.0,
@@ -932,7 +960,10 @@ async def upload_audio(request: Request):
                 "utteranceId": request_id,
                 "scenarioStepId": scenario_step_id,
                 "studentRunId": student_run_id,
-                "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                "ts": local_timestamp(),
+                # Kept with each sentence for the feedback report's emotion curve.
+                "tension": tension,
+                "kidEmotionState": kid_state,
             })
             if not analysis_published:
                 latest.update(fusion_res)
@@ -950,6 +981,8 @@ async def upload_audio(request: Request):
                 1,
             )
             cache_audio_result(cache_key, response)
+            # Whatever the phases above do not explain (so a slow step can never hide).
+            timings["otherMs"] = round(response["processingMs"] - sum(timings.values()), 1)
             print("[fusion]", json.dumps({
                 "requestId": request_id,
                 "text": response["text"],
@@ -994,7 +1027,7 @@ async def upload_text(request: Request):
                 fusion_session._history.append(text)
 
         fusion_res = dict(fusion_res)
-        fusion_res["ts"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        fusion_res["ts"] = local_timestamp()
         latest.update(fusion_res)
         append_transcript_entry(fusion_res)
 
@@ -1111,6 +1144,45 @@ def get_session_report(session_id: str):
     return FileResponse(str(path), media_type="application/json", filename=path.name)
 
 
+# Feedback reports (written by ExcelResultService when a result is submitted).
+#   /reports                 overview of the most recent day that has results
+#   /reports/2026-10-04      overview of that day
+#   /reports/2026-10-04/x    one student's report
+REPORT_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+REPORT_FILE_RE = re.compile(r"^[A-Za-z0-9_-]{1,100}\.html$")
+
+
+def _report_file(date_text: str, file_name: str):
+    if not REPORT_DATE_RE.fullmatch(date_text) or not REPORT_FILE_RE.fullmatch(file_name):
+        return JSONResponse(status_code=404, content={"ok": False, "error": "report not found"})
+    path = student_result_service.output_dir / date_text / file_name
+    if not path.is_file():
+        return JSONResponse(status_code=404, content={"ok": False, "error": "report not found"})
+    return FileResponse(str(path), media_type="text/html; charset=utf-8")
+
+
+@app.get("/reports")
+def get_latest_report_overview():
+    root = student_result_service.output_dir
+    days = sorted(
+        folder.name for folder in root.iterdir()
+        if folder.is_dir() and REPORT_DATE_RE.fullmatch(folder.name) and (folder / "index.html").is_file()
+    ) if root.exists() else []
+    if not days:
+        return JSONResponse(status_code=404, content={"ok": False, "error": "no reports yet"})
+    return RedirectResponse(url=f"/reports/{days[-1]}/index.html")
+
+
+@app.get("/reports/{date_text}")
+def get_report_overview(date_text: str):
+    return RedirectResponse(url=f"/reports/{date_text}/index.html")
+
+
+@app.get("/reports/{date_text}/{file_name}")
+def get_report(date_text: str, file_name: str):
+    return _report_file(date_text, file_name)
+
+
 @app.get("/last")
 def get_last():
     return JSONResponse(latest)
@@ -1128,7 +1200,7 @@ def _voice_error(code: str, message: str) -> Dict[str, Any]:
         "type": "error",
         "code": code,
         "message": message,
-        "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "ts": local_timestamp(),
     }
 
 
