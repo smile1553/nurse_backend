@@ -9,3 +9,4 @@ websockets
 faster-whisper
 opencc
 openpyxl
+httpx

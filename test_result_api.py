@@ -3,24 +3,29 @@ import json
 import tempfile
 import unittest
 import uuid
+from unittest.mock import patch
 from pathlib import Path
 
 import httpx
 import server_fusion
 from excel_result_service import ExcelResultService
 from result_models import StudentResultSubmission, StudentRunStart
+from result_uploader import ResultUploader
 
 
 class ResultApiTests(unittest.TestCase):
     def setUp(self):
         self.temp_dir = tempfile.TemporaryDirectory()
         self.original_service = server_fusion.student_result_service
+        self.original_uploader = server_fusion.result_uploader
         server_fusion.student_result_service = ExcelResultService(
             Path(self.temp_dir.name) / "student_results"
         )
+        server_fusion.result_uploader = ResultUploader(Path(self.temp_dir.name) / "student_results", url="", api_key="")
 
     def tearDown(self):
         server_fusion.student_result_service = self.original_service
+        server_fusion.result_uploader = self.original_uploader
         self.temp_dir.cleanup()
 
     def run_async(self, awaitable):
@@ -60,6 +65,34 @@ class ResultApiTests(unittest.TestCase):
         self.assertEqual(first["totalScore"], 88)
         self.assertFalse(first["duplicate"])
         self.assertTrue(second["duplicate"])
+        self.assertEqual(server_fusion.result_uploader.status()["counts"], {"pending": 1})
+
+    def test_failed_json_save_does_not_enqueue_stale_report(self):
+        session_id = self.run_async(server_fusion.create_experiment_session())["sessionId"]
+        result_id = uuid.uuid4()
+        payload = StudentResultSubmission(studentId="412345678", loginTime="2026-09-21T10:35:00+08:00", correctCount=7, toneScore=18)
+        self.run_async(server_fusion.submit_student_result(session_id, result_id, payload))
+        with patch.object(server_fusion.student_result_service, "_write_json_atomic", side_effect=OSError("disk full")), patch.object(server_fusion.result_uploader, "enqueue_file") as enqueue:
+            result = self.run_async(server_fusion.submit_student_result(session_id, result_id, payload))
+        self.assertTrue(result["ok"])
+        enqueue.assert_not_called()
+
+    def test_outbox_failure_keeps_existing_excel_and_html_flow(self):
+        session_id = self.run_async(server_fusion.create_experiment_session())["sessionId"]
+        result_id = uuid.uuid4()
+        payload = StudentResultSubmission(studentId="412345678", loginTime="2026-09-21T10:35:00+08:00", correctCount=7, toneScore=18)
+        with patch.object(server_fusion.result_uploader, "enqueue_file", side_effect=OSError("outbox unavailable")):
+            result = self.run_async(server_fusion.submit_student_result(session_id, result_id, payload))
+        self.assertTrue(result["ok"])
+        root = server_fusion.student_result_service.output_dir
+        self.assertTrue(list(root.glob("*.xlsx")))
+        self.assertTrue(list(root.glob("????-??-??/*.json")))
+        self.assertTrue(list(root.glob("????-??-??/*.html")))
+
+    def test_upload_status_endpoint(self):
+        status = self.run_async(server_fusion.get_upload_status())
+        self.assertFalse(status["enabled"])
+        self.assertEqual(status["counts"], {})
 
     def test_detailed_question_score_replaces_count_times_ten(self):
         session = self.run_async(server_fusion.create_experiment_session())

@@ -42,6 +42,7 @@ from excel_result_service import (
     StorageBusyError,
 )
 from result_models import StudentResultSubmission, StudentRunStart, clean_result_items, clean_result_steps, isoformat_seconds
+from result_uploader import ResultUploader
 
 def local_timestamp() -> str:
     """Now, in this computer's own time zone, e.g. 2026-10-05T00:12:03+08:00.
@@ -61,6 +62,7 @@ SESSION_REPORT_DIR = OUT_DIR / "session_reports"
 SESSION_REPORT_DIR.mkdir(parents=True, exist_ok=True)
 STUDENT_RESULT_DIR = OUT_DIR / "student_results"
 student_result_service = ExcelResultService(STUDENT_RESULT_DIR)
+result_uploader = ResultUploader(STUDENT_RESULT_DIR)
 ENERGY_GATE_RMS = float(os.getenv("ENERGY_GATE_RMS", "0.003"))
 ASR_WARMUP_ON_START = os.getenv("ASR_WARMUP_ON_START", "0").strip() in {"1", "true", "True", "yes", "on"}
 TTS_RATE = int(os.getenv("TTS_RATE", "185"))
@@ -553,6 +555,11 @@ async def create_experiment_session():
         return result_service_error_response(error)
 
 
+@app.get("/api/uploads/status")
+async def get_upload_status():
+    return await asyncio.to_thread(result_uploader.status)
+
+
 @app.get("/api/sessions/current")
 async def get_current_experiment_session():
     try:
@@ -624,6 +631,7 @@ async def submit_student_result(
             payload.questionScore,
             clean_result_items(payload.items) or None,
             clean_result_steps(payload.steps) or None,
+            on_json_saved=result_uploader.enqueue_file,
         )
         print(
             "[student_results] "
@@ -1415,6 +1423,7 @@ async def ws_feed(ws: WebSocket):
 
 @app.on_event("startup")
 async def on_start():
+    await result_uploader.start()
     await discovery_service.start()
     reset_transcripts_file()
 
@@ -1434,6 +1443,7 @@ async def on_start():
 
 @app.on_event("shutdown")
 async def on_shutdown():
+    await result_uploader.stop()
     await discovery_service.stop()
     global deepgram_http_client
     if deepgram_http_client is not None and not deepgram_http_client.is_closed:

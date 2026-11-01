@@ -11,7 +11,7 @@ from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 import report_builder
-from typing import Any, Dict, Iterator, List, Optional
+from typing import Any, Callable, Dict, Iterator, List, Optional
 
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
@@ -137,6 +137,7 @@ class ExcelResultService:
         question_score: Optional[int] = None,
         items: Optional[List[Dict[str, Any]]] = None,
         steps: Optional[List[Dict[str, Any]]] = None,
+        on_json_saved: Optional[Callable[[Path], None]] = None,
     ) -> Dict[str, Any]:
         # "items" (per-question details for the feedback report) is deliberately NOT part of
         # the fingerprint below: a retry that lost the details must still count as the same result.
@@ -207,6 +208,7 @@ class ExcelResultService:
                     transcript_relative_path,
                     items,
                     steps,
+                    on_json_saved,
                 )
                 return {
                     "ok": True,
@@ -264,6 +266,7 @@ class ExcelResultService:
                 transcript_relative_path,
                 items,
                 steps,
+                on_json_saved,
             )
             return {
                 "ok": True,
@@ -297,6 +300,7 @@ class ExcelResultService:
         transcript_relative_path: str,
         items: Optional[List[Dict[str, Any]]] = None,
         steps: Optional[List[Dict[str, Any]]] = None,
+        on_json_saved: Optional[Callable[[Path], None]] = None,
     ) -> None:
         """One readable file per student inside a folder named after the date.
 
@@ -369,6 +373,13 @@ class ExcelResultService:
                 "reportFile": target.with_suffix(".html").name,
             }
             self._write_json_atomic(data_path, record)
+            # Only enqueue the JSON just saved successfully, never a stale report.
+            # Cloud/outbox failures must not change the existing local submission flow.
+            if on_json_saved is not None:
+                try:
+                    on_json_saved(data_path)
+                except Exception:
+                    print("[upload] enqueue failed; background discovery will retry")
             self._write_text_atomic(target.with_suffix(".html"), report_builder.student_report_html(record))
             self._write_text_atomic(
                 target.parent / "index.html",
