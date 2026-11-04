@@ -3,6 +3,7 @@ from collections import OrderedDict
 from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field
 import openai
+from runtime_paths import BASE_DIR
 from env_config import (
     OPENAI_API_KEY_TEMPLATE_VALUE,
     initialize_environment,
@@ -151,7 +152,7 @@ def ensure_api_key_template(path: str) -> bool:
 
 
 def load_api_key() -> Optional[str]:
-    base = os.path.dirname(__file__)
+    base = str(BASE_DIR)
     legacy_key_path = os.path.join(base, "openai_api.json")
     ensure_api_key_template(legacy_key_path)
 

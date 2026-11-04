@@ -3,9 +3,9 @@ from pathlib import Path
 from typing import Optional
 
 from dotenv import load_dotenv
+from runtime_paths import BASE_DIR
 
 
-BASE_DIR = Path(__file__).resolve().parent
 ENV_PATH = BASE_DIR / ".env"
 ENV_EXAMPLE_PATH = BASE_DIR / ".env.example"
 
