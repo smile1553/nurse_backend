@@ -4,6 +4,10 @@ __pycache__/
 .venv-build/
 build/
 dist/
+Windows/out/
+Windows/logs/
+Windows/.env.example
+Windows/verification.log
 /build-exe.log
 /packaging-tests.log
 /build-env-tests.log
@@ -15,5 +19,6 @@ dist/
 openai_api.json
 openai_api.local.json
 .env
+!Windows/.env
 .env.example
 env.txt

@@ -16,15 +16,11 @@ import soundfile as sf
 
 
 def verify():
-    source = Path(__file__).resolve().parent / "dist" / "NurseBackend"
+    source = Path(__file__).resolve().parent / "Windows"
     with tempfile.TemporaryDirectory(prefix="nurse exe test ") as temporary:
         root = Path(temporary) / "部署 測試"
         root.mkdir()
         shutil.copy2(source / "NurseBackend.exe", root)
-        # Directory junctions avoid copying the 1.5 GB model for each verification.
-        for name in ("_internal", "models"):
-            subprocess.run(["cmd", "/c", "mklink", "/J", str(root / name), str(source / name)],
-                           check=True, capture_output=True)
         try:
             (root / ".env").write_text("LLM_MODEL=deployment-test-model\nASR_WARMUP_ON_START=0\n", encoding="utf-8")
             env = os.environ.copy()
@@ -40,7 +36,7 @@ def verify():
             assert result.returncode == 0, result.stdout.decode("utf-8", "replace") + result.stderr.decode("utf-8", "replace")
             assert str(root) in result.stdout.decode("utf-8"), "exe used incorrect deployment path"
             assert '"llm_model": "deployment-test-model"' in result.stdout.decode("utf-8"), "external .env not loaded"
-            print("Packaged imports, external paths, OpenCC and offline Whisper model: OK")
+            print("Packaged imports, external paths and OpenCC: OK")
             with (root / "verification.log").open("wb") as log:
                 process = subprocess.Popen([executable, "--port", str(port)], cwd=temporary,
                                            env=env, stdout=log, stderr=log)
@@ -79,12 +75,17 @@ def verify():
                             assert list((root / "out" / "student_results").glob(pattern)), pattern
                         print("Packaged HTTP startup, scores, deduplication, reports, files, upload status and Windows TTS: OK")
                 finally:
-                    process.terminate()
+                    if os.name == "nt":
+                        subprocess.run(
+                            ["taskkill", "/PID", str(process.pid), "/T", "/F"],
+                            capture_output=True,
+                            check=False,
+                        )
+                    else:
+                        process.terminate()
                     process.wait(timeout=30)
         finally:
-            # Unlink only junctions we created, before TemporaryDirectory cleanup.
-            for name in ("_internal", "models"):
-                os.rmdir(root / name)
+            pass
 
 
 if __name__ == "__main__":

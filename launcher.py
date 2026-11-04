@@ -19,24 +19,10 @@ def main():
         ENV_PATH.write_text(ENV_EXAMPLE_TEMPLATE, encoding="utf-8")
     initialize_environment()
 
-    # Ship the existing local ASR model so first use requires no model download.
-    model_dir = BASE_DIR / "models" / "whisper-medium"
-    if model_dir.is_dir() and os.getenv("ASR_MODEL_NAME", "medium") == "medium":
-        os.environ["ASR_MODEL_NAME"] = str(model_dir)
-
     from server_fusion import app, SERVER_HOST, SERVER_PORT
     if "--self-test" in sys.argv:
         import json
         from opencc import OpenCC
-        from test_sensevoice import warmup_model, sensevoice_infer
-        warmup_model()
-        import tempfile
-        import numpy as np
-        import soundfile as sf
-        with tempfile.TemporaryDirectory() as temporary:
-            sample = os.path.join(temporary, "silence.wav")
-            sf.write(sample, np.zeros(16000, dtype=np.float32), 16000)
-            sensevoice_infer(sample)
         print(json.dumps({"ok": True, "base_dir": str(BASE_DIR),
                           "env_path": str(ENV_PATH), "routes": len(app.routes),
                           "llm_model": os.getenv("LLM_MODEL"),

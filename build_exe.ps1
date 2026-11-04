@@ -7,33 +7,21 @@ if (-not (Test-Path -LiteralPath $buildPython)) {
 }
 & $buildPython -m pip install -r requirements.txt pyinstaller
 if ($LASTEXITCODE -ne 0) { throw 'Failed to install build dependencies' }
-& $buildPython -m PyInstaller --noconfirm --distpath build\release nurse_backend.spec
+& $buildPython -m PyInstaller --noconfirm --clean --distpath build\release nurse_backend.spec
 if ($LASTEXITCODE -ne 0) { throw 'Failed to build executable' }
-$deployDir = Join-Path $PSScriptRoot 'dist\NurseBackend'
-$stagedDir = Join-Path $PSScriptRoot 'build\release\NurseBackend'
-# Update executable components without removing existing .env, models or out.
-New-Item -ItemType Directory -Force -Path (Join-Path $deployDir '_internal') | Out-Null
-Copy-Item -LiteralPath (Join-Path $stagedDir 'NurseBackend.exe') -Destination $deployDir -Force
-Copy-Item -Path (Join-Path $stagedDir '_internal\*') -Destination (Join-Path $deployDir '_internal') -Recurse -Force
-# Local keys are copied only to the external configuration, never bundled.
-if (-not (Test-Path -LiteralPath (Join-Path $deployDir '.env'))) {
-    if (Test-Path -LiteralPath '.env') {
-        Copy-Item -LiteralPath '.env' -Destination (Join-Path $deployDir '.env')
-    } else {
-        & $buildPython -c "from env_config import ENV_EXAMPLE_TEMPLATE; from pathlib import Path; Path('dist/NurseBackend/.env').write_text(ENV_EXAMPLE_TEMPLATE, encoding='utf-8')"
-    }
+$deployDir = Join-Path $PSScriptRoot 'Windows'
+$stagedExe = Join-Path $PSScriptRoot 'build\release\NurseBackend.exe'
+# The one-file executable contains all runtime components. Keep .env and out.
+$runtimeDir = Join-Path $deployDir '_internal'
+if (Test-Path -LiteralPath $runtimeDir) {
+    Remove-Item -LiteralPath $runtimeDir -Recurse -Force
 }
-$modelRoot = Join-Path $env:USERPROFILE '.cache\huggingface\hub\models--Systran--faster-whisper-medium\snapshots'
-$modelSnapshot = Get-ChildItem -LiteralPath $modelRoot -Directory -ErrorAction SilentlyContinue |
-    Where-Object { Test-Path -LiteralPath (Join-Path $_.FullName 'model.bin') } |
-    Select-Object -First 1
-$targetModel = Join-Path $deployDir 'models\whisper-medium'
-New-Item -ItemType Directory -Force -Path $targetModel | Out-Null
-if ($modelSnapshot) {
-    Copy-Item -Path (Join-Path $modelSnapshot.FullName '*') -Destination $targetModel -Recurse -Force
-} else {
-    & $buildPython -c "from huggingface_hub import snapshot_download; snapshot_download('Systran/faster-whisper-medium', local_dir='dist/NurseBackend/models/whisper-medium')"
-    if ($LASTEXITCODE -ne 0) { throw 'Failed to download ASR model' }
+New-Item -ItemType Directory -Force -Path $deployDir | Out-Null
+Copy-Item -LiteralPath $stagedExe -Destination $deployDir -Force
+# Commit only a safe template. Never copy the developer's local API keys.
+if (-not (Test-Path -LiteralPath (Join-Path $deployDir '.env'))) {
+    & $buildPython -c "from env_config import ENV_EXAMPLE_TEMPLATE; from pathlib import Path; Path('Windows/.env').write_text(ENV_EXAMPLE_TEMPLATE.replace('ASR_WARMUP_ON_START=1', 'ASR_WARMUP_ON_START=0'), encoding='utf-8')"
+    if ($LASTEXITCODE -ne 0) { throw 'Failed to create the external environment template' }
 }
 Copy-Item -LiteralPath 'EXE_README.txt' -Destination (Join-Path $deployDir 'README.txt')
 Write-Host "Ready: $deployDir\NurseBackend.exe"

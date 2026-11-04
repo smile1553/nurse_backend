@@ -1,5 +1,21 @@
 # nurse_backend
 
+## 老師在 Windows 直接啟動
+
+1. 在 GitHub 按 `Code` → `Download ZIP`，下載後先完整解壓縮。
+2. 進入 `Windows` 資料夾，用記事本開啟 `.env`，填入 `OPENAI_API_KEY` 和 `DEEPGRAM_API_KEY`。
+3. 點兩下 `NurseBackend.exe`，看到 `Uvicorn running` 後保持視窗開啟即可。
+
+不需要安裝 Python，也不需要開啟 VS Code。修改 `.env` 後關閉並重新啟動 exe 即可生效。
+所有執行元件都已包進單一 exe；請保留 `NurseBackend.exe`、`.env` 和 `README.txt` 在同一個 `Windows` 資料夾。
+程式產生的成績、報告與錄音會保存在 `Windows/out`，這些使用資料不會提交至 Git。
+
+維護者需要重新打包時，在 Windows 執行：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\build_exe.ps1
+```
+
 <<<<<<< HEAD
 ## Unity 學生成績 API
 
