@@ -43,6 +43,7 @@ from excel_result_service import (
 )
 from result_models import StudentResultSubmission, StudentRunStart, clean_result_items, clean_result_steps, isoformat_seconds
 from result_uploader import ResultUploader
+from runtime_paths import BASE_DIR
 
 def local_timestamp() -> str:
     """Now, in this computer's own time zone, e.g. 2026-10-05T00:12:03+08:00.
@@ -53,7 +54,7 @@ def local_timestamp() -> str:
     return datetime.now().astimezone().isoformat(timespec="seconds")
 
 
-OUT_DIR = Path(__file__).resolve().parent / "out"
+OUT_DIR = BASE_DIR / "out"
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 TRANSCRIPT_PATH = OUT_DIR / "transcripts.jsonl"
 SESSION_AUDIO_DIR = OUT_DIR / "session_audio"
@@ -698,6 +699,27 @@ def synthesize_tts_wav(text: str, speaker: str = "") -> bytes:
         raise ValueError("text is required")
 
     with tempfile.TemporaryDirectory() as tmpdir:
+        if os.name == "nt":
+            wav_path = Path(tmpdir) / "tts.wav"
+            child_env = os.environ.copy()
+            child_env.update(NURSE_TTS_TEXT=content, NURSE_TTS_PATH=str(wav_path),
+                             NURSE_TTS_VOICE=resolve_tts_voice(speaker),
+                             NURSE_TTS_RATE=str(max(-10, min(10, round((TTS_RATE - 185) / 20)))))
+            script = (
+                "$ErrorActionPreference='Stop'; Add-Type -AssemblyName System.Speech; "
+                "$s=New-Object System.Speech.Synthesis.SpeechSynthesizer; "
+                "try { if ($env:NURSE_TTS_VOICE) { $s.SelectVoice($env:NURSE_TTS_VOICE) }; "
+                "$s.Rate=[int]$env:NURSE_TTS_RATE; "
+                "$s.SetOutputToWaveFile($env:NURSE_TTS_PATH); "
+                "$s.Speak($env:NURSE_TTS_TEXT) } finally { $s.Dispose() }"
+            )
+            try:
+                subprocess.run(["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script],
+                               env=child_env, check=True, capture_output=True, timeout=60,
+                               creationflags=subprocess.CREATE_NO_WINDOW)
+            except (OSError, subprocess.SubprocessError) as error:
+                raise RuntimeError("Windows speech synthesis failed; check installed speech voices") from error
+            return wav_path.read_bytes()
         aiff_path = Path(tmpdir) / "tts.aiff"
         cmd = ["say", "-r", str(TTS_RATE), "-o", str(aiff_path)]
         voice = resolve_tts_voice(speaker)

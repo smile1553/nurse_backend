@@ -1,6 +1,16 @@
 out/
 __pycache__/
 .venv/
+.venv-build/
+build/
+dist/
+Windows/out/
+Windows/logs/
+Windows/.env.example
+Windows/verification.log
+/build-exe.log
+/packaging-tests.log
+/build-env-tests.log
 .vscode/
 .DS_Store
 *.meta
@@ -9,5 +19,6 @@ __pycache__/
 openai_api.json
 openai_api.local.json
 .env
+!Windows/.env
 .env.example
 env.txt
