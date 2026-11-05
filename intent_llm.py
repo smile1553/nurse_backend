@@ -3,6 +3,7 @@ from collections import OrderedDict
 from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field
 import openai
+from intent_rules import apply_intent_rules
 from env_config import (
     OPENAI_API_KEY_TEMPLATE_VALUE,
     initialize_environment,
@@ -196,6 +197,13 @@ SYSTEM_PROMPT = (
     "但只根據 current_utterance 選擇一個 intent："
     "reassure、encourage、neutral、command、force、threat。"
     "force 表示強迫行為，threat 表示威脅後果。"
+    "command 只用在沒有商量餘地的命令口氣（例如「躺下」「不要動」「快一點」「給我坐好」）。"
+    "有禮貌、讓孩子或家屬可以選擇的請求與邀請，例如句尾是「好不好」「好嗎」「可以…嗎」「要不要」"
+    "（「我們先幫熊熊量耳溫好不好」「芽芽你可以先躺下來嗎」），屬於徵求同意：intent 用 reassure，"
+    "action_tag 用 ask_consent，不要判成 command 或 force。"
+    "用獎勵邀請合作（例如「如果你讓我聽心跳，我就給你這張貼紙」）屬於 encourage，不是 force。"
+    "道歉或收回剛才的兇話（例如「對不起芽芽我們剛剛太兇了」「不好意思剛剛太大聲了」）是安撫：intent 用 reassure，"
+    "toxicity 要低；句子裡的「兇」是在描述自己剛才的行為，不是在威脅。"
     "辱罵、貶低、嘲笑、責罵或對孩子、家屬發脾氣的話（例如「你是白癡嗎」「吵死了」「煩不煩」）"
     "即使沒有提到後果，也一律歸為 threat，並給高 toxicity。"
     "只判斷 intent，不計算 tension、patience或emotion。"
@@ -366,6 +374,8 @@ def analyze_intent(recent_utterances: list[str], current: str, context: Optional
         raw = _extract_json_object(txt)
         data = normalize_llm_output(raw)
         IntentSchema(**data)  # 驗證格式
+        # Fixed corrections for polite requests / apologies (see intent_rules.py).
+        data = apply_intent_rules(data, current)
         _cache_set(key, data)
         return dict(data)
     except Exception as e:
