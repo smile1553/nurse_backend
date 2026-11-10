@@ -1,0 +1,13 @@
+本機驗證結果
+
+通過：官方 python.exe Authenticode 簽章（Python Software Foundation）。
+通過：BAT 實際啟動與 --self-test、套件匯入、OpenCC 轉換。
+通過：複製至含中文、空白的不同資料夾後讀取外部 .env、啟動 HTTP。
+通過：建立 session、學生開始、成績計分、重送去重、報告與 Excel/文字/JSON/HTML 檔案。
+通過：未設定上傳服務時維持停用；pip check 無相依衝突。
+通過：原專案規則 7 項、成績與上傳 16 項、Excel 18 項測試，共 41 項。
+
+限制：本機 Windows TTS 回傳 500：Windows speech synthesis failed; check installed speech voices。
+未驗證：老師電腦的 Smart App Control、校園網路與防火牆、實體 Quest、
+使用真實 API 金鑰的 OpenAI/Deepgram 請求、教師端外部上傳。
+未包含真實金鑰與舊成績；未更動 GitHub 遠端。

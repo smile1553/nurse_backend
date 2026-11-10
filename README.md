@@ -1,6 +1,24 @@
 # nurse_backend
 
-## 老師在 Windows 直接啟動
+## 老師使用：Python＋BAT 可攜版
+
+若原本的 `NurseBackend.exe` 被 Windows 智慧型應用程式控制封鎖，可測試此版本。
+
+1. [下載可攜版 ZIP](https://github.com/smile1553/nurse_backend/raw/refs/heads/main/portable/NurseBackend_Portable.zip)，並完整解壓縮。
+2. 雙擊「編輯設定.bat」，填入 OpenAI 與 Deepgram 金鑰並儲存。
+3. 雙擊「啟動.bat」，看到 `Uvicorn running` 後保持視窗開啟。
+
+不需另外安裝 Python；已附官方 Python 3.13.9 x64 與所需套件。設定在
+`backend/.env`，成績、報告與錄音在 `backend/out`。本版使用 Deepgram，
+不含本機 Whisper 模型，`ASR_WARMUP_ON_START` 請保持 `0`。
+
+此版本不會關閉 Windows 防護，也不保證老師電腦一定放行。雲端服務仍需金鑰與網路，
+Quest 與電腦需可在區網互連。官方 Python 簽章、本機啟動與成績報告測試已通過；
+本機 Windows 語音合成失敗，仍需在老師電腦確認中文語音。
+詳見 [完整使用說明](portable/README.txt) 與 [驗證結果](portable/驗證結果.txt)。
+ZIP 僅包含金鑰範本，不含私人金鑰或學生資料。
+
+## 原有 EXE 版本
 
 1. 在 GitHub 按 `Code` → `Download ZIP`，下載後先完整解壓縮。
 2. 進入 `Windows` 資料夾，用記事本開啟 `.env`，填入 `OPENAI_API_KEY` 和 `DEEPGRAM_API_KEY`。
