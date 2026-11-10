@@ -13,7 +13,7 @@ from env_config import (
 
 initialize_environment()
 
-LLM_MODEL = os.getenv("LLM_MODEL", "gpt-4o-mini")
+LLM_MODEL = os.getenv("LLM_MODEL", "gpt-6-luna")
 LLM_TIMEOUT_SEC = float(os.getenv("LLM_TIMEOUT_SEC", "2.5"))
 LLM_CACHE_SIZE = int(os.getenv("LLM_CACHE_SIZE", "256"))
 _LLM_CACHE = OrderedDict()
@@ -367,10 +367,14 @@ def analyze_intent(recent_utterances: list[str], current: str, context: Optional
         {"role": "user", "content": json.dumps(user_payload, ensure_ascii=False)}
     ]
     try:
+        # Keep this short classification task non-reasoning on Luna. This also
+        # preserves support for temperature=0; legacy models get no new option.
+        model_options = {"reasoning_effort": "none"} if LLM_MODEL == "gpt-6-luna" else {}
         resp = openai_client.chat.completions.create(
             model=LLM_MODEL,
             messages=messages,
             temperature=0,
+            **model_options,
         )
         txt = resp.choices[0].message.content
         raw = _extract_json_object(txt)
