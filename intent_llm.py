@@ -217,7 +217,7 @@ SYSTEM_PROMPT = (
     "如果句子太模糊或不屬於任何具體劇情行動，就用 neutral。"
     "只輸出 JSON：intent（reassure|encourage|neutral|command|force|threat）、action_tag、"
     "sentiment（positive|neutral|negative）、toxicity(0~1)、coercion(0~1)、"
-    "confidence(0~1)、keywords（字串陣列）。只回 JSON，勿包含其他文字。"
+    "confidence(0~1)。只回 JSON，勿包含其他文字。"
 )
 
 
@@ -329,7 +329,8 @@ def normalize_llm_output(data: dict) -> dict:
     base["toxicity"] = max(0.0, min(1.0, _to_float(data.get("toxicity", 0.0))))
     base["coercion"] = max(0.0, min(1.0, _to_float(data.get("coercion", 0.0))))
     base["confidence"] = max(0.0, min(1.0, _to_float(data.get("confidence", 0.0))))
-    base["keywords"] = _normalize_keywords(data.get("keywords", []))
+    # Preserve the response contract without asking the model to generate keywords.
+    base["keywords"] = []
 
     # Safety net: abusive speech that the model still labelled as harmless must not leave
     # the child's tension untouched. Treated like a threat so Unity needs no new intent.
