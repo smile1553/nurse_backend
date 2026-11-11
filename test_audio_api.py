@@ -1,9 +1,11 @@
 import asyncio
 import io
+import json
 import tempfile
 import unittest
 import uuid
 from pathlib import Path
+from unittest.mock import patch
 
 import httpx
 import numpy as np
@@ -149,6 +151,31 @@ class AudioApiTests(unittest.IsolatedAsyncioTestCase):
             "X-Scenario-Step-Id": "step-3",
             "X-Student-Run-Id": self.student_run_id,
         }
+
+    async def test_ear_temperature_speech_corrections_preserve_real_threats(self):
+        cases = [
+            ("逼一下就好了喔", "force", "嗶一聲就好了喔", "reassure", "temp_reassurance", -5.0),
+            ("幫熊熊量耳溫", "command", "幫熊熊量耳溫", "neutral", "role_play_temp", -5.0),
+            ("要不要也兩耳光", "threat", "要不要也量耳溫", "reassure", "temp_reassurance", -5.0),
+            ("你再不聽話我就給你兩耳光", "threat", "你再不聽話我就給你兩耳光", "threat", "threat", -3.5),
+        ]
+        with patch("intent_llm.openai_client") as model, patch("intent_llm._LLM_CACHE", {}):
+            for index, (raw, model_intent, text, intent, tag, tension) in enumerate(cases):
+                async def transcribe(wav, sr):
+                    return DeepgramTranscriptResult(text=raw, confidence=0.9, language="zh-TW")
+
+                server_fusion.transcribe_with_deepgram = transcribe
+                model.chat.completions.create.return_value.choices[0].message.content = json.dumps({
+                    "intent": model_intent, "action_tag": model_intent, "sentiment": "negative",
+                    "toxicity": 0.9, "coercion": 0.9, "confidence": 0.9,
+                })
+                headers = self.headers(f"ear-temp-{index}")
+                headers["X-Scenario-Step-Id"] = "part5"
+                response = await self.client.post("/audio", content=wav_bytes(0.2), headers=headers)
+                body = response.raise_for_status().json()
+                self.assertEqual((body["text"], body["intent"], body["actionTag"], body["tension"]),
+                                 (text, intent, tag, tension))
+                self.assertEqual(body["confidence"], 0.9)
 
     async def test_low_energy_is_ignored_and_duplicate_is_cached(self):
         first = await self.client.post("/audio", content=wav_bytes(0), headers=self.headers("silent-1"))

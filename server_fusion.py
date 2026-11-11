@@ -287,7 +287,11 @@ def _run_text_pipeline(
     context: Optional[Dict[str, Any]] = None,
 ) -> Tuple[Dict[str, Any], float]:
     raw_text = (input_text or "").strip()
-    text = sanitize_transcript(raw_text)
+    text = sanitize_transcript(
+        raw_text,
+        scenario_step_id=(context or {}).get("current_step_id", ""),
+        previous_text=history[-1] if history else "",
+    )
 
     if text:
         llm, llm_window_text = analyze_semantics(text, history, context=context)

@@ -239,6 +239,10 @@ MEASURE_FIX_RE = re.compile(
     r"[養亮良兩倆諒輛](?=(?:一下|完)?(?:體溫|耳溫|血壓|呼吸|心跳|脈搏|心尖脈|生命徵象))"
 )
 
+EAR_TEMPERATURE_STEPS = {"part4", "part5", "part6"}
+THERMOMETER_BEEP_MISHEARD = re.compile(r"(耳溫槍)?逼(?:逼)?一下(就好(?:了)?[喔哦囉]?)")
+EAR_TEMP_INVITATION_MISHEARD = re.compile(r"(要不要也)[兩量]耳光([呢呀喔]?)")
+
 SPACE_NORMALIZE_RE = re.compile(r"\s+")
 PUNCT_NORMALIZE_RE = re.compile(r"[、,.!?！？；;]+")
 
@@ -259,7 +263,7 @@ def contains_domain_tokens(text: str) -> bool:
     return any(tok in text for tok in DOMAIN_HINT_TOKENS)
 
 
-def sanitize_transcript(text: str) -> str:
+def sanitize_transcript(text: str, *, scenario_step_id: str = "", previous_text: str = "") -> str:
     raw = (text or "").strip()
     if not raw:
         return ""
@@ -271,6 +275,18 @@ def sanitize_transcript(text: str) -> str:
     for wrong, right in ASR_REPLACEMENTS.items():
         cleaned = cleaned.replace(wrong, right)
     cleaned = MEASURE_FIX_RE.sub("量", cleaned)
+
+    if scenario_step_id in EAR_TEMPERATURE_STEPS:
+        phrase = cleaned.strip(" 。").replace(" ", "")
+        beep = THERMOMETER_BEEP_MISHEARD.fullmatch(phrase)
+        if beep:
+            cleaned = f"{beep[1] or ''}嗶一聲{beep[2]}"
+        elif "耳溫" in previous_text:
+            # This ambiguous phrase can also be a threat. Require the exact
+            # invitation and preceding ear-temperature context before editing it.
+            invitation = EAR_TEMP_INVITATION_MISHEARD.fullmatch(phrase)
+            if invitation:
+                cleaned = f"{invitation[1]}量耳溫{invitation[2]}"
 
     cleaned = maybe_snap_to_canonical_phrase(cleaned)
 
@@ -295,6 +311,8 @@ def maybe_snap_to_canonical_phrase(text: str) -> str:
     best_score = 0.0
     for phrase in DOMAIN_CANONICAL_PHRASES:
         phrase_compact = phrase.replace(" ", "")
+        if "耳溫" in compact and "耳溫" not in phrase_compact:
+            continue
         if abs(len(phrase_compact) - len(compact)) > 4:
             continue
         score = SequenceMatcher(None, compact, phrase_compact).ratio()

@@ -15,7 +15,7 @@ from typing import Dict
 # Words that show the sentence really is harsh: if any is present, no rule applies.
 HARSH_RE = re.compile(
     r"不乖|很醜|好醜|醜死|白癡|笨蛋|煩不煩|煩死|吵死|閉嘴|不准|不許|給我|快一點|快點|快啦|"
-    r"再哭|不要再哭|一直哭|叫醫生|要打針了|打你|罵你|揍|兇你|生氣了喔|"
+    r"再哭|不要再哭|一直哭|叫醫生|要打針了|打你|罵你|揍|兇你|耳光|生氣了喔|"
     r"不然|否則|再不|不聽話|怎麼這麼|怎麼可以"
 )
 
@@ -35,6 +35,13 @@ APOLOGY_REASON_RE = re.compile(r"剛剛|剛才|太兇|太凶|兇|凶|大聲|生�
 
 # Phrases that would look harsh but are only being quoted inside an apology.
 APOLOGY_HARSH_OK = ("太兇", "太凶", "很兇", "很凶")
+
+# Full phrases only, so an additional command or threat cannot be softened.
+EAR_TEMPERATURE_CORRECTIONS = (
+    (re.compile(r"(?:耳溫槍)?嗶(?:一聲|一下)就好(?:了)?[喔哦囉]?"), "reassure", "temp_reassurance"),
+    (re.compile(r"(?:我們)?(?:先)?幫熊熊(?:先)?量(?:一下)?耳溫[吧喔哦囉]?"), "neutral", "role_play_temp"),
+    (re.compile(r"要不要(?:也)?量(?:一下)?耳溫[呢呀喔]?"), "reassure", "temp_reassurance"),
+)
 
 
 def _has_harsh(text: str, ignore: tuple = ()) -> bool:
@@ -67,10 +74,18 @@ def is_polite_request(text: str) -> bool:
 
 
 def apply_intent_rules(data: Dict, text: str) -> Dict:
-    """Return a copy of the normalized LLM result with the two corrections applied."""
+    """Return a copy of the normalized LLM result with local corrections applied."""
     out = dict(data or {})
     intent = out.get("intent", "neutral")
     t = (text or "").strip()
+
+    if intent in ("threat", "force", "command"):
+        phrase = re.sub(r"\s+", "", t.strip("。？！?!"))
+        for pattern, corrected_intent, action_tag in EAR_TEMPERATURE_CORRECTIONS:
+            if pattern.fullmatch(phrase):
+                out.update(intent=corrected_intent, action_tag=action_tag, sentiment="neutral",
+                           toxicity=0.0, coercion=0.0, rule="ear_temperature_phrase")
+                return out
 
     if intent in ("threat", "force", "command") and is_apology(t):
         out["intent"] = "reassure"

@@ -20,6 +20,16 @@ class TranscriptFixTests(unittest.TestCase):
         self.assertIn("壓脈帶", sanitize_transcript("姊姊幫你選一條鴨脈帶剛剛好的"))
         self.assertNotIn("芽芽脈帶", sanitize_transcript("姊姊幫你選一條鴨脈帶剛剛好的"))
 
+    def test_ear_temperature_corrections_require_context(self):
+        self.assertEqual(sanitize_transcript("逼一下就好了喔"), "逼一下就好了喔")
+        invitation = "要不要也兩耳光"
+        self.assertEqual(sanitize_transcript(invitation, scenario_step_id="part5"), invitation)
+        self.assertEqual(sanitize_transcript(invitation, scenario_step_id="part2",
+                                             previous_text="幫熊熊量耳溫"), invitation)
+        threat = "你再不聽話我就給你兩耳光"
+        self.assertEqual(sanitize_transcript(threat, scenario_step_id="part5",
+                                             previous_text="幫熊熊量耳溫"), threat)
+
     def test_no_entry_undoes_another(self):
         for wrong, right in ASR_REPLACEMENTS.items():
             for other_wrong in ASR_REPLACEMENTS:
