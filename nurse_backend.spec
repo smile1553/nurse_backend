@@ -5,7 +5,7 @@ datas, binaries, hiddenimports = [], [], []
 # The running server uses Deepgram for /audio and /voice.  Keep the portable
 # GitHub build small enough to commit by excluding the unused local Whisper
 # runtime (its model alone is about 1.5 GB).
-for package in ("opencc", "uvicorn", "websockets"):
+for package in ("uvicorn", "websockets"):
     package_datas, package_binaries, package_imports = collect_all(package)
     datas += package_datas
     binaries += package_binaries

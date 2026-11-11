@@ -49,14 +49,14 @@ class DeepgramRestTransportTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(request.headers["Content-Type"], "audio/wav")
             self.assertEqual(request.headers["Authorization"], "Token test-deepgram-key")
             self.assertEqual(request.url.params["model"], "nova-3")
-            self.assertEqual(request.url.params["language"], "zh")
+            self.assertEqual(request.url.params["language"], "zh-TW")
             self.assertTrue((await request.aread()).startswith(b"RIFF"))
             return httpx.Response(200, json={
                 "metadata": {"request_id": "dg-1"},
                 "results": {"channels": [{"alternatives": [{
                     "transcript": "test transcript",
                     "confidence": 0.93,
-                    "detected_language": "zh",
+                    "detected_language": "zh-TW",
                 }]}]},
             })
 
@@ -67,7 +67,7 @@ class DeepgramRestTransportTests(unittest.IsolatedAsyncioTestCase):
             np.full(1600, 0.1, dtype=np.float32), 16000
         )
         self.assertEqual(result.text, "test transcript")
-        self.assertEqual(result.language, "zh")
+        self.assertEqual(result.language, "zh-TW")
         self.assertAlmostEqual(result.confidence, 0.93)
         self.assertTrue(result.is_final)
         self.assertTrue(result.speech_final)

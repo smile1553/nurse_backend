@@ -22,7 +22,7 @@ def verify():
         root.mkdir()
         shutil.copy2(source / "NurseBackend.exe", root)
         try:
-            (root / ".env").write_text("LLM_MODEL=deployment-test-model\nASR_WARMUP_ON_START=0\n", encoding="utf-8")
+            (root / ".env").write_text("LLM_MODEL=deployment-test-model\nDEEPGRAM_LANGUAGE=zh-TW\nASR_WARMUP_ON_START=0\n", encoding="utf-8")
             env = os.environ.copy()
             env.update(OPENAI_API_KEY="", DEEPGRAM_API_KEY="", RESULT_UPLOAD_URL="",
                        RESULT_UPLOAD_API_KEY="", HF_HUB_OFFLINE="1")
@@ -36,7 +36,8 @@ def verify():
             assert result.returncode == 0, result.stdout.decode("utf-8", "replace") + result.stderr.decode("utf-8", "replace")
             assert str(root) in result.stdout.decode("utf-8"), "exe used incorrect deployment path"
             assert '"llm_model": "deployment-test-model"' in result.stdout.decode("utf-8"), "external .env not loaded"
-            print("Packaged imports, external paths and OpenCC: OK")
+            assert '"deepgram_language": "zh-TW"' in result.stdout.decode("utf-8"), "traditional Chinese setting not loaded"
+            print("Packaged imports, external paths and Deepgram language: OK")
             with (root / "verification.log").open("wb") as log:
                 process = subprocess.Popen([executable, "--port", str(port)], cwd=temporary,
                                            env=env, stdout=log, stderr=log)

@@ -3,11 +3,6 @@ import os
 import re
 from difflib import SequenceMatcher
 
-try:
-    from opencc import OpenCC
-    _OPENCC = OpenCC("s2t")
-except Exception:
-    _OPENCC = None
 from pathlib import Path
 from typing import List, Optional, Tuple, Dict, Any
 
@@ -272,9 +267,6 @@ def sanitize_transcript(text: str) -> str:
     cleaned = TOKEN_RE.sub("", raw).replace("\uFFFD", "").strip()
     cleaned = PUNCT_NORMALIZE_RE.sub(" ", cleaned)
     cleaned = SPACE_NORMALIZE_RE.sub(" ", cleaned).strip()
-
-    if _OPENCC is not None:
-        cleaned = _OPENCC.convert(cleaned)
 
     for wrong, right in ASR_REPLACEMENTS.items():
         cleaned = cleaned.replace(wrong, right)

@@ -14,6 +14,7 @@ import uvicorn
 from collections import OrderedDict, deque
 from deepgram_streaming import DeepgramStreamingError, DeepgramStreamingSession, DeepgramTranscriptResult
 from env_config import (
+    DEFAULT_DEEPGRAM_LANGUAGE,
     DEEPGRAM_API_KEY_TEMPLATE_VALUE,
     read_api_key,
 )
@@ -769,9 +770,10 @@ async def transcribe_with_deepgram(wav: np.ndarray, sample_rate: int) -> Deepgra
     if not deepgram_api_key:
         raise DeepgramStreamingError("DEEPGRAM_API_KEY is missing")
 
+    language = os.getenv("DEEPGRAM_LANGUAGE", DEFAULT_DEEPGRAM_LANGUAGE).strip()
     params: List[Tuple[str, str]] = [
         ("model", os.getenv("DEEPGRAM_MODEL", "nova-3").strip()),
-        ("language", os.getenv("DEEPGRAM_LANGUAGE", "zh").strip()),
+        ("language", language),
         ("punctuate", "true"),
         ("smart_format", "false"),
     ]
@@ -799,7 +801,7 @@ async def transcribe_with_deepgram(wav: np.ndarray, sample_rate: int) -> Deepgra
         metadata = payload.get("metadata") or {}
         detected_language = best.get("detected_language") or best.get("language") or ""
         if not detected_language:
-            detected_language = os.getenv("DEEPGRAM_LANGUAGE", "zh").strip()
+            detected_language = language
 
         return DeepgramTranscriptResult(
             text=(best.get("transcript") or "").strip(),

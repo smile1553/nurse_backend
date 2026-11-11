@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Optional
 from urllib.parse import urlencode
 
 from env_config import (
+    DEFAULT_DEEPGRAM_LANGUAGE,
     DEEPGRAM_API_KEY_TEMPLATE_VALUE,
     initialize_environment,
     read_api_key,
@@ -41,7 +42,7 @@ class DeepgramStreamingSession:
         self.sample_rate = int(sample_rate or os.getenv("DEEPGRAM_SAMPLE_RATE", "16000"))
         self.channels = int(channels or 1)
         self.encoding = encoding or "linear16"
-        self.language = (language or os.getenv("DEEPGRAM_LANGUAGE", "zh")).strip()
+        self.language = (language or os.getenv("DEEPGRAM_LANGUAGE", DEFAULT_DEEPGRAM_LANGUAGE)).strip()
         self.model = (model or os.getenv("DEEPGRAM_MODEL", "nova-3")).strip()
         self.finalize_timeout_sec = float(
             finalize_timeout_sec or os.getenv("DEEPGRAM_FINALIZE_TIMEOUT_SEC", "1.2")

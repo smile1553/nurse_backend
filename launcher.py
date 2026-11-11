@@ -22,11 +22,10 @@ def main():
     from server_fusion import app, SERVER_HOST, SERVER_PORT
     if "--self-test" in sys.argv:
         import json
-        from opencc import OpenCC
         print(json.dumps({"ok": True, "base_dir": str(BASE_DIR),
                           "env_path": str(ENV_PATH), "routes": len(app.routes),
                           "llm_model": os.getenv("LLM_MODEL"),
-                          "traditional": OpenCC("s2t").convert("护理")}, ensure_ascii=False))
+                          "deepgram_language": os.getenv("DEEPGRAM_LANGUAGE")}, ensure_ascii=False))
         return
 
     import uvicorn
