@@ -240,7 +240,11 @@ MEASURE_FIX_RE = re.compile(
 )
 
 EAR_TEMPERATURE_STEPS = {"part4", "part5", "part6"}
-THERMOMETER_BEEP_MISHEARD = re.compile(r"(耳溫槍)?逼(?:逼)?一下(就好(?:了)?[喔哦囉]?)")
+THERMOMETER_BEEP_MISHEARD = re.compile(
+    r"((?:芽芽)?(?:耳溫槍|(?:幫(?:你|妳|芽芽|熊熊|小熊))?量(?:一下)?耳溫)?)"
+    r"(?:逼(?:逼)?一下(?:下)?|逼一聲|必一聲|嗶一身)"
+    r"((?:就好(?:了)?)?[喔哦囉]?)"
+)
 EAR_TEMP_INVITATION_MISHEARD = re.compile(r"(要不要也)[兩量]耳光([呢呀喔]?)")
 
 SPACE_NORMALIZE_RE = re.compile(r"\s+")
@@ -277,10 +281,10 @@ def sanitize_transcript(text: str, *, scenario_step_id: str = "", previous_text:
     cleaned = MEASURE_FIX_RE.sub("量", cleaned)
 
     if scenario_step_id in EAR_TEMPERATURE_STEPS:
-        phrase = cleaned.strip(" 。").replace(" ", "")
+        phrase = re.sub(r"[\s，。！？、]+", "", cleaned)
         beep = THERMOMETER_BEEP_MISHEARD.fullmatch(phrase)
         if beep:
-            cleaned = f"{beep[1] or ''}嗶一聲{beep[2]}"
+            cleaned = f"{beep[1]}嗶一聲{beep[2]}"
         elif "耳溫" in previous_text:
             # This ambiguous phrase can also be a threat. Require the exact
             # invitation and preceding ear-temperature context before editing it.

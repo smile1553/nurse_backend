@@ -30,6 +30,15 @@ class TranscriptFixTests(unittest.TestCase):
         self.assertEqual(sanitize_transcript(threat, scenario_step_id="part5",
                                              previous_text="幫熊熊量耳溫"), threat)
 
+    def test_ear_thermometer_accepts_short_beep_variants(self):
+        for phrase in ("逼一下", "逼逼一下", "逼一聲", "必一聲", "嗶一身"):
+            with self.subTest(phrase=phrase):
+                self.assertEqual(sanitize_transcript(phrase, scenario_step_id="part5"), "嗶一聲")
+        self.assertEqual(sanitize_transcript("幫熊熊量耳溫，逼一下", scenario_step_id="part5"),
+                         "幫熊熊量耳溫嗶一聲")
+        self.assertEqual(sanitize_transcript("芽芽，逼一下喔", scenario_step_id="part5"), "芽芽嗶一聲喔")
+        self.assertEqual(sanitize_transcript("我會逼一下你", scenario_step_id="part5"), "我會逼一下你")
+
     def test_no_entry_undoes_another(self):
         for wrong, right in ASR_REPLACEMENTS.items():
             for other_wrong in ASR_REPLACEMENTS:
