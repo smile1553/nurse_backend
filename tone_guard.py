@@ -210,6 +210,12 @@ def apply_tone_guard(data: Dict, text: str) -> Dict:
     out = dict(data or {})
     intent = out.get("intent", "neutral")
     new, rule = guard_intent(text, intent)
+    # Keep the exact ear-temperature demonstration correction from intent_rules.
+    # Pressure rules still take precedence over this broad comfort match.
+    if (rule == "comfort_phrase" and intent == "neutral"
+            and out.get("rule") == "ear_temperature_phrase"
+            and out.get("action_tag") == "role_play_temp"):
+        return out
     if rule is None:
         return out
     out["guard_from"] = intent

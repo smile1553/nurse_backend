@@ -56,7 +56,8 @@ class DeepgramRestTransportTests(unittest.IsolatedAsyncioTestCase):
             return httpx.Response(200, json={
                 "metadata": {"request_id": "dg-1"},
                 "results": {"channels": [{"alternatives": [{
-                    "transcript": "test transcript",
+                    "transcript": "\u62a4\u7406\u5e08\u5e2e\u4f60\u91cf\u4f53\u6e29",
+                    "words": [{"word": "\u4f53\u6e29", "punctuated_word": "\u4f53\u6e29。"}],
                     "confidence": 0.93,
                     "detected_language": "zh-TW",
                 }]}]},
@@ -65,10 +66,14 @@ class DeepgramRestTransportTests(unittest.IsolatedAsyncioTestCase):
         server_fusion.deepgram_http_client = httpx.AsyncClient(
             transport=httpx.MockTransport(handler)
         )
-        result = await server_fusion.transcribe_with_deepgram(
-            np.full(1600, 0.1, dtype=np.float32), 16000
-        )
-        self.assertEqual(result.text, "test transcript")
+        with patch.dict("os.environ", {"DEEPGRAM_LANGUAGE": "zh-CN"}):
+            result = await server_fusion.transcribe_with_deepgram(
+                np.full(1600, 0.1, dtype=np.float32), 16000
+            )
+        self.assertEqual(result.text, "護理師幫你量體溫")
+        best = result.raw_messages[0]["channel"]["alternatives"][0]
+        self.assertEqual(best["transcript"], result.text)
+        self.assertEqual(best["words"][0]["punctuated_word"], "體溫。")
         self.assertEqual(result.language, "zh-TW")
         self.assertAlmostEqual(result.confidence, 0.93)
         self.assertTrue(result.is_final)

@@ -55,6 +55,8 @@ def initialize_environment() -> None:
     ensure_env_example()
     load_dotenv(dotenv_path=ENV_PATH, override=False)
     load_dotenv(dotenv_path=ENV_EXAMPLE_PATH, override=False)
+    # This application always transcribes Mandarin in Traditional Chinese.
+    os.environ["DEEPGRAM_LANGUAGE"] = DEFAULT_DEEPGRAM_LANGUAGE
     _initialized = True
 
 

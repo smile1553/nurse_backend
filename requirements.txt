@@ -9,3 +9,4 @@ websockets
 faster-whisper
 openpyxl
 httpx
+hanziconv==0.3.2

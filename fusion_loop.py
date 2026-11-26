@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import List, Optional, Tuple, Dict, Any
 
 from test_sensevoice import sensevoice_infer
+from traditional_chinese import to_traditional
 from semantic_analysis import (
     DEFAULT_SEMANTIC_ANALYSIS,
     analyze_semantics,
@@ -268,7 +269,7 @@ def contains_domain_tokens(text: str) -> bool:
 
 
 def sanitize_transcript(text: str, *, scenario_step_id: str = "", previous_text: str = "") -> str:
-    raw = (text or "").strip()
+    raw = to_traditional(text).strip()
     if not raw:
         return ""
 

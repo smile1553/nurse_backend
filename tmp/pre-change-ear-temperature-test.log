@@ -1,0 +1,40 @@
+[config] created environment template: C:\Users\Ren\AppData\Local\Temp\nurse before changes 0xnb_v4z\.env.example
+[intent_llm] created API key template: C:\Users\Ren\AppData\Local\Temp\nurse before changes 0xnb_v4z\openai_api.json
+[intent_llm] API key missing, fallback mode enabled.
+[student_results] session created -> 20261126_212422_f330fd20
+[audio] request=ear-temp-0 bytes=3244 samples=1600 sr=16000 rms=0.134349 peak=0.189997 gate=0.003000
+[fusion] {"requestId": "ear-temp-0", "text": "嗶一聲就好了喔", "tension": -5.0, "intent": "reassure", "processingMs": 20.3, "timings": {"bodyReadMs": 0.0, "queueWaitMs": 0.0, "decodeMs": 3.6, "recordingWriteMs": 0.1, "preprocessMs": 2.8, "deepgramMs": 0.0, "semanticMs": 4.5, "transcriptWriteMs": 9.1, "otherMs": 0.2}}
+[audio] request=ear-temp-1 bytes=3244 samples=1600 sr=16000 rms=0.134349 peak=0.189997 gate=0.003000
+[fusion] {"requestId": "ear-temp-1", "text": "幫熊熊量耳溫", "tension": -5.0, "intent": "reassure", "processingMs": 28.5, "timings": {"bodyReadMs": 0.0, "queueWaitMs": 0.0, "decodeMs": 11.7, "recordingWriteMs": 0.0, "preprocessMs": 2.7, "deepgramMs": 0.0, "semanticMs": 3.8, "transcriptWriteMs": 10.1, "otherMs": 0.2}}
+F
+======================================================================
+FAIL: test_ear_temperature_speech_corrections_preserve_real_threats (test_audio_api.AudioApiTests)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "C:\Users\Ren\AppData\Local\Programs\Python\Python39\lib\unittest\async_case.py", line 64, in _callTestMethod
+    self._callMaybeAsync(method)
+  File "C:\Users\Ren\AppData\Local\Programs\Python\Python39\lib\unittest\async_case.py", line 87, in _callMaybeAsync
+    return self._asyncioTestLoop.run_until_complete(fut)
+  File "C:\Users\Ren\AppData\Local\Programs\Python\Python39\lib\asyncio\base_events.py", line 647, in run_until_complete
+    return future.result()
+  File "C:\Users\Ren\AppData\Local\Programs\Python\Python39\lib\unittest\async_case.py", line 101, in _asyncioLoopRunner
+    ret = await awaitable
+  File "C:\Users\Ren\AppData\Local\Temp\nurse before changes 0xnb_v4z\test_audio_api.py", line 176, in test_ear_temperature_speech_corrections_preserve_real_threats
+    self.assertEqual((body["text"], body["intent"], body["actionTag"], body["tension"]),
+AssertionError: Tuples differ: ('幫熊熊量耳溫', 'reassure', 'role_play_temp', -5.0) != ('幫熊熊量耳溫', 'neutral', 'role_play_temp', -5.0)
+
+First differing element 1:
+'reassure'
+'neutral'
+
+- ('幫熊熊量耳溫', 'reassure', 'role_play_temp', -5.0)
+?              - ^^^^^
+
++ ('幫熊熊量耳溫', 'neutral', 'role_play_temp', -5.0)
+?             ++++  ^
+
+
+----------------------------------------------------------------------
+Ran 1 test in 0.216s
+
+FAILED (failures=1)

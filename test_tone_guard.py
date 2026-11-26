@@ -1,6 +1,7 @@
 import unittest
 
 from tone_guard import apply_tone_guard, check_before_llm, guard_intent
+from intent_rules import apply_intent_rules
 
 
 def llm(intent):
@@ -57,6 +58,21 @@ class MissedPressure(unittest.TestCase):
 
 
 class WronglyRaised(unittest.TestCase):
+    def test_exact_ear_temperature_demo_keeps_its_neutral_correction(self):
+        text = "幫熊熊量耳溫"
+        corrected = apply_intent_rules(llm("command"), text)
+        result = apply_tone_guard(corrected, text)
+        self.assertEqual(result["intent"], "neutral")
+        self.assertEqual(result["action_tag"], "role_play_temp")
+        self.assertNotIn("guard_rule", result)
+
+        # A following threat must still override even an earlier correction.
+        threatened = apply_tone_guard(corrected, text + "，再哭我就叫醫生來打針")
+        self.assertEqual(threatened["intent"], "threat")
+        self.assertEqual(threatened["guard_rule"], "pressure_phrase")
+        # General comforting speech keeps the existing positive behavior.
+        self.assertEqual(judged("那我們現在幫熊熊量體溫好嗎", "command"), "reassure")
+
     def test_beep_and_explanations_are_not_pressure(self):
         self.assertEqual(judged("而溫槍逼一下就好了哦", "command"), "reassure")
         self.assertEqual(judged("逼一下就好了很快不會痛", "force"), "reassure")

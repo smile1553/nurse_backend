@@ -13,6 +13,7 @@ from discovery import DiscoveryService
 import uvicorn
 from collections import OrderedDict, deque
 from deepgram_streaming import DeepgramStreamingError, DeepgramStreamingSession, DeepgramTranscriptResult
+from traditional_chinese import normalize_transcript_payload, to_traditional
 from env_config import (
     DEFAULT_DEEPGRAM_LANGUAGE,
     DEEPGRAM_API_KEY_TEMPLATE_VALUE,
@@ -774,7 +775,7 @@ async def transcribe_with_deepgram(wav: np.ndarray, sample_rate: int) -> Deepgra
     if not deepgram_api_key:
         raise DeepgramStreamingError("DEEPGRAM_API_KEY is missing")
 
-    language = os.getenv("DEEPGRAM_LANGUAGE", DEFAULT_DEEPGRAM_LANGUAGE).strip()
+    language = DEFAULT_DEEPGRAM_LANGUAGE
     params: List[Tuple[str, str]] = [
         ("model", os.getenv("DEEPGRAM_MODEL", "nova-3").strip()),
         ("language", language),
@@ -798,7 +799,7 @@ async def transcribe_with_deepgram(wav: np.ndarray, sample_rate: int) -> Deepgra
             content=encode_pcm16_wav(wav, sample_rate),
         )
         response.raise_for_status()
-        payload = response.json()
+        payload = normalize_transcript_payload(response.json())
         channels = ((payload.get("results") or {}).get("channels") or [])
         alternatives = ((channels[0] or {}).get("alternatives") or []) if channels else []
         best = alternatives[0] if alternatives else {}
@@ -808,7 +809,7 @@ async def transcribe_with_deepgram(wav: np.ndarray, sample_rate: int) -> Deepgra
             detected_language = language
 
         return DeepgramTranscriptResult(
-            text=(best.get("transcript") or "").strip(),
+            text=to_traditional(best.get("transcript") or "").strip(),
             confidence=float(best.get("confidence") or 0.0),
             language=str(detected_language),
             is_final=True,

@@ -1,0 +1,54 @@
+[student_results] session created -> 20261126_212820_288c8bd0
+[audio] request=utterance-1 bytes=3244 samples=1600 sr=16000 rms=0.134349 peak=0.189997 gate=0.003000
+[fusion] {"requestId": "utterance-1", "text": "不用怕", "tension": -4.0, "intent": "reassure", "processingMs": 46.7, "timings": {"bodyReadMs": 0.0, "queueWaitMs": 0.0, "decodeMs": 3.4, "recordingWriteMs": 0.0, "preprocessMs": 1.5, "deepgramMs": 35.1, "semanticMs": 0.0, "transcriptWriteMs": 6.4, "otherMs": 0.3}}
+[student_results] session created -> 20261126_212821_d36b1e6a
+[audio] request=deepgram-failure bytes=3244 samples=1600 sr=16000 rms=0.134349 peak=0.189997 gate=0.003000
+[student_results] session created -> 20261126_212821_436233cc
+[audio] request=no-speech bytes=3244 samples=1600 sr=16000 rms=0.134349 peak=0.189997 gate=0.003000
+............................................................................
+----------------------------------------------------------------------
+Ran 76 tests in 5.876s
+
+OK
+[fusion] {"requestId": "no-speech", "text": "", "tension": -5.0, "intent": "neutral", "processingMs": 4.4, "timings": {"bodyReadMs": 0.0, "queueWaitMs": 0.0, "decodeMs": 2.4, "recordingWriteMs": 0.0, "preprocessMs": 1.7, "deepgramMs": 0.0, "semanticMs": 0.0, "transcriptWriteMs": 0.0, "otherMs": 0.3}}
+[student_results] session created -> 20261126_212821_e0ccc5c4
+[audio] request=ear-temp-0 bytes=3244 samples=1600 sr=16000 rms=0.134349 peak=0.189997 gate=0.003000
+[fusion] {"requestId": "ear-temp-0", "text": "嗶一聲就好了喔", "tension": -5.0, "intent": "reassure", "processingMs": 11.8, "timings": {"bodyReadMs": 0.0, "queueWaitMs": 0.0, "decodeMs": 2.4, "recordingWriteMs": 0.0, "preprocessMs": 1.8, "deepgramMs": 0.0, "semanticMs": 3.0, "transcriptWriteMs": 4.5, "otherMs": 0.1}}
+[audio] request=ear-temp-1 bytes=3244 samples=1600 sr=16000 rms=0.134349 peak=0.189997 gate=0.003000
+[fusion] {"requestId": "ear-temp-1", "text": "幫熊熊量耳溫", "tension": -5.0, "intent": "neutral", "processingMs": 11.6, "timings": {"bodyReadMs": 0.0, "queueWaitMs": 0.0, "decodeMs": 2.1, "recordingWriteMs": 0.0, "preprocessMs": 2.0, "deepgramMs": 0.0, "semanticMs": 2.6, "transcriptWriteMs": 4.7, "otherMs": 0.2}}
+[audio] request=ear-temp-2 bytes=3244 samples=1600 sr=16000 rms=0.134349 peak=0.189997 gate=0.003000
+[fusion] {"requestId": "ear-temp-2", "text": "要不要也量耳溫", "tension": -5.0, "intent": "reassure", "processingMs": 11.1, "timings": {"bodyReadMs": 0.0, "queueWaitMs": 0.0, "decodeMs": 2.0, "recordingWriteMs": 0.0, "preprocessMs": 1.9, "deepgramMs": 0.0, "semanticMs": 2.7, "transcriptWriteMs": 4.3, "otherMs": 0.2}}
+[audio] request=ear-temp-3 bytes=3244 samples=1600 sr=16000 rms=0.134349 peak=0.189997 gate=0.003000
+[fusion] {"requestId": "ear-temp-3", "text": "你再不聽話我就給你兩耳光", "tension": -3.5, "intent": "threat", "processingMs": 12.1, "timings": {"bodyReadMs": 0.0, "queueWaitMs": 0.0, "decodeMs": 2.0, "recordingWriteMs": 0.0, "preprocessMs": 1.7, "deepgramMs": 0.0, "semanticMs": 3.4, "transcriptWriteMs": 4.8, "otherMs": 0.2}}
+[student_results] session created -> 20261126_212821_41b009cc
+[student_results] session created -> 20261126_212821_8936b6a5
+[audio] request=silent-1 bytes=3244 samples=1600 sr=16000 rms=0.000000 peak=0.000000 gate=0.003000
+[fusion] {"requestId": "silent-1", "text": "", "tension": -5.0, "intent": "neutral", "processingMs": 4.7, "timings": {"bodyReadMs": 0.0, "queueWaitMs": 0.0, "decodeMs": 2.4, "recordingWriteMs": 0.0, "preprocessMs": 2.0, "deepgramMs": 0.0, "semanticMs": 0.0, "transcriptWriteMs": 0.0, "otherMs": 0.3}}
+[student_results] session created -> 20261126_212821_3657cde4
+[student_results] session created -> 20261126_212825_0d115280
+[student_results] session=20261126_212825_0d115280 result=9af73267-4e0f-4e81-b3c5-a49d739ec1f2 duplicate=False student=412345678 received: correctCount=6 toneScore=18 questionScore=68 -> question=68 total=86
+[student_results] session=20261126_212825_0d115280 result=9af73267-4e0f-4e81-b3c5-a49d739ec1f2 duplicate=True student=412345678 received: correctCount=6 toneScore=18 questionScore=68 -> question=68 total=86
+[student_results] session created -> 20261126_212825_856e56ac
+[student_results] session=20261126_212825_856e56ac result=341ca606-8c93-4ad9-bdcd-7269beb8d54b duplicate=False student=412345678 received: correctCount=7 toneScore=18 questionScore=None -> question=70 total=88
+[student_results] failed to write feedback report: disk full
+[student_results] session=20261126_212825_856e56ac result=341ca606-8c93-4ad9-bdcd-7269beb8d54b duplicate=True student=412345678 received: correctCount=7 toneScore=18 questionScore=None -> question=70 total=88
+[student_results] session created -> 20261126_212825_879f460c
+[student_results] session=20261126_212825_879f460c result=d54444b4-0604-4fb9-9f01-5dd4edf023cc duplicate=False student=412345678 received: correctCount=7 toneScore=18 questionScore=None -> question=70 total=88
+[student_results] session=20261126_212825_879f460c result=d54444b4-0604-4fb9-9f01-5dd4edf023cc duplicate=True student=412345678 received: correctCount=7 toneScore=18 questionScore=None -> question=70 total=88
+[student_results] session created -> 20261126_212825_d2c2e56c
+[student_results] session=20261126_212825_d2c2e56c result=026dc863-fa67-493d-8319-8953f2bd6b13 duplicate=False student=412345678 received: correctCount=7 toneScore=18 questionScore=None -> question=70 total=88
+[student_results] session created -> 20261126_212826_b4138400
+[student_results] session=20261126_212826_b4138400 result=af917172-0693-46ac-b351-7cd71dc8baca duplicate=False student=412345678 received: correctCount=7 toneScore=18 questionScore=60 -> question=60 total=78
+[student_results] session=20261126_212826_b4138400 result=af917172-0693-46ac-b351-7cd71dc8baca duplicate=True student=412345678 received: correctCount=7 toneScore=18 questionScore=60 -> question=60 total=78
+[student_results] session created -> 20261126_212826_9ca47799
+[student_results] session created -> 20261126_212826_7aa2d40f
+[student_results] session created -> 20261126_212826_7603b4d2
+[upload] enqueue failed; background discovery will retry
+[student_results] session=20261126_212826_7603b4d2 result=a05edbfa-3d7a-43d5-a8b5-3351a0d002d6 duplicate=False student=412345678 received: correctCount=7 toneScore=18 questionScore=None -> question=70 total=88
+[upload] result uploaded
+[upload] HTTP 409; needs review
+[upload] result uploaded
+[upload] network or response failure; will retry
+[upload] result uploaded
+[upload] result uploaded
+[upload] network or response failure; will retry

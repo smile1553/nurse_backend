@@ -22,6 +22,8 @@ def main():
     from server_fusion import app, SERVER_HOST, SERVER_PORT
     if "--self-test" in sys.argv:
         import json
+        from traditional_chinese import to_traditional
+        assert to_traditional("\u62a4\u7406\u5e08\u5e2e\u4f60\u91cf\u4f53\u6e29") == "護理師幫你量體溫"
         print(json.dumps({"ok": True, "base_dir": str(BASE_DIR),
                           "env_path": str(ENV_PATH), "routes": len(app.routes),
                           "llm_model": os.getenv("LLM_MODEL"),

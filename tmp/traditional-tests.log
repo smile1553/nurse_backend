@@ -1,0 +1,50 @@
+[student_results] session created -> 20261126_211652_866a47e2
+[audio] request=utterance-1 bytes=3244 samples=1600 sr=16000 rms=0.134349 peak=0.189997 gate=0.003000
+[fusion] {"requestId": "utterance-1", "text": "不用怕", "tension": -4.0, "intent": "reassure", "processingMs": 41.3, "timings": {"bodyReadMs": 0.0, "queueWaitMs": 0.0, "decodeMs": 3.8, "recordingWriteMs": 0.0, "preprocessMs": 1.8, "deepgramMs": 31.2, "semanticMs": 0.0, "transcriptWriteMs": 4.3, "otherMs": 0.2}}
+[student_results] session created -> 20261126_211652_5f6bbc1b
+[audio] request=deepgram-failure bytes=3244 samples=1600 sr=16000 rms=0.134349 peak=0.189997 gate=0.003000
+[student_results] session created -> 20261126_211652_620f938c
+[audio] request=no-speech bytes=3244 samples=1600 sr=16000 rms=0.134349 peak=0.189997 gate=0.003000
+...........F........
+======================================================================
+FAIL: test_ear_temperature_speech_corrections_preserve_real_threats (test_audio_api.AudioApiTests)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "C:\Users\Ren\AppData\Local\Programs\Python\Python39\lib\unittest\async_case.py", line 64, in _callTestMethod
+    self._callMaybeAsync(method)
+  File "C:\Users\Ren\AppData\Local\Programs\Python\Python39\lib\unittest\async_case.py", line 87, in _callMaybeAsync
+    return self._asyncioTestLoop.run_until_complete(fut)
+  File "C:\Users\Ren\AppData\Local\Programs\Python\Python39\lib\asyncio\base_events.py", line 647, in run_until_complete
+    return future.result()
+  File "C:\Users\Ren\AppData\Local\Programs\Python\Python39\lib\unittest\async_case.py", line 101, in _asyncioLoopRunner
+    ret = await awaitable
+  File "C:\Users\Ren\Desktop\nurse_backend\test_audio_api.py", line 181, in test_ear_temperature_speech_corrections_preserve_real_threats
+    self.assertEqual((body["text"], body["intent"], body["actionTag"], body["tension"]),
+AssertionError: Tuples differ: ('幫熊熊量耳溫', 'reassure', 'role_play_temp', -5.0) != ('幫熊熊量耳溫', 'neutral', 'role_play_temp', -5.0)
+
+First differing element 1:
+'reassure'
+'neutral'
+
+- ('幫熊熊量耳溫', 'reassure', 'role_play_temp', -5.0)
+[fusion] {"requestId": "no-speech", "text": "", "tension": -5.0, "intent": "neutral", "processingMs": 4.0, "timings": {"bodyReadMs": 0.0, "queueWaitMs": 0.0, "decodeMs": 2.0, "recordingWriteMs": 0.0, "preprocessMs": 1.8, "deepgramMs": 0.0, "semanticMs": 0.0, "transcriptWriteMs": 0.0, "otherMs": 0.2}}
+[student_results] session created -> 20261126_211652_a32b23a2
+[audio] request=ear-temp-0 bytes=3244 samples=1600 sr=16000 rms=0.134349 peak=0.189997 gate=0.003000
+[fusion] {"requestId": "ear-temp-0", "text": "嗶一聲就好了喔", "tension": -5.0, "intent": "reassure", "processingMs": 11.7, "timings": {"bodyReadMs": 0.0, "queueWaitMs": 0.0, "decodeMs": 2.0, "recordingWriteMs": 0.0, "preprocessMs": 1.4, "deepgramMs": 0.0, "semanticMs": 3.4, "transcriptWriteMs": 4.8, "otherMs": 0.1}}
+?              - ^^^^^
+[audio] request=ear-temp-1 bytes=3244 samples=1600 sr=16000 rms=0.134349 peak=0.189997 gate=0.003000
+[fusion] {"requestId": "ear-temp-1", "text": "幫熊熊量耳溫", "tension": -5.0, "intent": "reassure", "processingMs": 11.3, "timings": {"bodyReadMs": 0.0, "queueWaitMs": 0.0, "decodeMs": 2.3, "recordingWriteMs": 0.0, "preprocessMs": 1.7, "deepgramMs": 0.0, "semanticMs": 2.1, "transcriptWriteMs": 5.0, "otherMs": 0.2}}
+
++ ('幫熊熊量耳溫', 'neutral', 'role_play_temp', -5.0)
+?             ++++  ^
+
+
+----------------------------------------------------------------------
+Ran 20 tests in 0.501s
+
+FAILED (failures=1)
+[student_results] session created -> 20261126_211652_903de5b1
+[student_results] session created -> 20261126_211652_ce33bb3a
+[audio] request=silent-1 bytes=3244 samples=1600 sr=16000 rms=0.000000 peak=0.000000 gate=0.003000
+[fusion] {"requestId": "silent-1", "text": "", "tension": -5.0, "intent": "neutral", "processingMs": 4.8, "timings": {"bodyReadMs": 0.0, "queueWaitMs": 0.0, "decodeMs": 2.7, "recordingWriteMs": 0.0, "preprocessMs": 2.0, "deepgramMs": 0.0, "semanticMs": 0.0, "transcriptWriteMs": 0.0, "otherMs": 0.1}}
+[student_results] session created -> 20261126_211652_4f8602f9

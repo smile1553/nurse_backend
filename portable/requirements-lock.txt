@@ -29,3 +29,4 @@ typing-inspection==0.4.5
 typing_extensions==4.16.0
 uvicorn==0.54.0
 websockets==17.4
+hanziconv==0.3.2
