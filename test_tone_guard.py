@@ -19,7 +19,8 @@ class NotTheStudent(unittest.TestCase):
 
     def test_game_voice_lines_are_skipped(self):
         for text in ["好的麻煩你了", "芽芽以爲你們一進來就是要打針", "討厭你", "我不想要不想要我不要討厭你",
-                     "你看有貼紙耶 那我們讓姐姐嚷一下好不好", "你怎麼這麼沒禮貌", "那你要輕輕的綁喲"]:
+                     "你看有貼紙耶 那我們讓姐姐嚷一下好不好", "你怎麼這麼沒禮貌", "那你要輕輕的綁喲",
+                     "我說我不要", "我不要 我不要打消", "我要怕我"]:
             self.assertEqual(check_before_llm(text), "game_voice_line", text)
 
     def test_student_lines_are_not_mistaken_for_game_lines(self):
@@ -45,7 +46,8 @@ class MissedPressure(unittest.TestCase):
             self.assertEqual(judged(text, "neutral"), "threat", text)
 
     def test_force(self):
-        for text in ["媽媽你把他押注", "沒有再問你就是要量血壓", "你說你不要就不要喔", "不管你要不要今天就是一定要量"]:
+        for text in ["媽媽你把他押注", "沒有再問你就是要量血壓", "你說你不要就不要喔", "不管你要不要今天就是一定要量",
+                     "不管你今天要不要 今天一定要兩碗的人走", "你同不同意都沒差現在就要量"]:
             self.assertEqual(judged(text, "command"), "force", text)
 
     def test_harsh_part_wins_over_nice_words(self):
