@@ -4,6 +4,7 @@ import os
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 from urllib.parse import urlencode
+from traditional_chinese import normalize_transcript_payload, to_traditional
 
 from env_config import (
     DEFAULT_DEEPGRAM_LANGUAGE,
@@ -42,7 +43,7 @@ class DeepgramStreamingSession:
         self.sample_rate = int(sample_rate or os.getenv("DEEPGRAM_SAMPLE_RATE", "16000"))
         self.channels = int(channels or 1)
         self.encoding = encoding or "linear16"
-        self.language = (language or os.getenv("DEEPGRAM_LANGUAGE", DEFAULT_DEEPGRAM_LANGUAGE)).strip()
+        self.language = DEFAULT_DEEPGRAM_LANGUAGE
         self.model = (model or os.getenv("DEEPGRAM_MODEL", "nova-3")).strip()
         self.finalize_timeout_sec = float(
             finalize_timeout_sec or os.getenv("DEEPGRAM_FINALIZE_TIMEOUT_SEC", "1.2")
@@ -176,7 +177,7 @@ class DeepgramStreamingSession:
         language = self._language_values[-1] if self._language_values else self.language
 
         return DeepgramTranscriptResult(
-            text=text,
+            text=to_traditional(text),
             confidence=confidence,
             language=language,
             is_final=bool(self._final_parts),
@@ -194,6 +195,7 @@ class DeepgramStreamingSession:
                 except json.JSONDecodeError:
                     continue
 
+                msg = normalize_transcript_payload(msg)
                 self._raw_messages.append(msg)
                 if len(self._raw_messages) > 24:
                     self._raw_messages = self._raw_messages[-24:]
@@ -222,7 +224,7 @@ class DeepgramStreamingSession:
             return
 
         best = alternatives[0] or {}
-        transcript = (best.get("transcript") or "").strip()
+        transcript = to_traditional(best.get("transcript") or "").strip()
         if not transcript:
             return
 

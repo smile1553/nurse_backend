@@ -1,0 +1,78 @@
+........Executing <Task pending name='Task-5' coro=<IsolatedAsyncioTestCase._asyncioLoopRunner() running at C:\Users\Ren\AppData\Local\Programs\Python\Python39\lib\unittest\async_case.py:101> wait_for=<Future pending cb=[_chain_future.<locals>._call_check_cancel() at C:\Users\Ren\AppData\Local\Programs\Python\Python39\lib\asyncio\futures.py:384, <TaskWakeupMethWrapper object at 0x000002AAC2CC94F0>()] created at C:\Users\Ren\AppData\Local\Programs\Python\Python39\lib\asyncio\base_events.py:429> created at C:\Users\Ren\AppData\Local\Programs\Python\Python39\lib\unittest\async_case.py:117> took 0.172 seconds
+...F...............................................................
+======================================================================
+FAIL: test_ear_temperature_speech_corrections_preserve_real_threats (test_audio_api.AudioApiTests)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "C:\Users\Ren\AppData\Local\Programs\Python\Python39\lib\unittest\async_case.py", line 64, in _callTestMethod
+    self._callMaybeAsync(method)
+  File "C:\Users\Ren\AppData\Local\Programs\Python\Python39\lib\unittest\async_case.py", line 87, in _callMaybeAsync
+    return self._asyncioTestLoop.run_until_complete(fut)
+  File "C:\Users\Ren\AppData\Local\Programs\Python\Python39\lib\asyncio\base_events.py", line 647, in run_until_complete
+    return future.result()
+  File "C:\Users\Ren\AppData\Local\Programs\Python\Python39\lib\unittest\async_case.py", line 101, in _asyncioLoopRunner
+    ret = await awaitable
+  File "C:\Users\Ren\Desktop\nurse_backend\test_audio_api.py", line 181, in test_ear_temperature_speech_corrections_preserve_real_threats
+    self.assertEqual((body["text"], body["intent"], body["actionTag"], body["tension"]),
+AssertionError: Tuples differ: ('幫熊熊量耳溫', 'reassure', 'role_play_temp', -5.0) != ('幫熊熊量耳溫', 'neutral', 'role_play_temp', -5.0)
+
+First differing element 1:
+'reassure'
+'neutral'
+
+- ('幫熊熊量耳溫', 'reassure', 'role_play_temp', -5.0)
+?              - ^^^^^
+
++ ('幫熊熊量耳溫', 'neutral', 'role_play_temp', -5.0)
+?             ++++  ^
+
+
+----------------------------------------------------------------------
+Ran 75 tests in 7.608s
+
+FAILED (failures=1)
+[student_results] session created -> 20261126_212228_ac227203
+[audio] request=utterance-1 bytes=3244 samples=1600 sr=16000 rms=0.134349 peak=0.189997 gate=0.003000
+[fusion] {"requestId": "utterance-1", "text": "不用怕", "tension": -4.0, "intent": "reassure", "processingMs": 47.0, "timings": {"bodyReadMs": 0.0, "queueWaitMs": 0.0, "decodeMs": 3.6, "recordingWriteMs": 0.0, "preprocessMs": 1.5, "deepgramMs": 33.7, "semanticMs": 0.0, "transcriptWriteMs": 8.0, "otherMs": 0.2}}
+[student_results] session created -> 20261126_212228_e01c58cd
+[audio] request=deepgram-failure bytes=3244 samples=1600 sr=16000 rms=0.134349 peak=0.189997 gate=0.003000
+[student_results] session created -> 20261126_212228_28484cb6
+[audio] request=no-speech bytes=3244 samples=1600 sr=16000 rms=0.134349 peak=0.189997 gate=0.003000
+[fusion] {"requestId": "no-speech", "text": "", "tension": -5.0, "intent": "neutral", "processingMs": 4.5, "timings": {"bodyReadMs": 0.0, "queueWaitMs": 0.0, "decodeMs": 2.4, "recordingWriteMs": 0.0, "preprocessMs": 1.9, "deepgramMs": 0.0, "semanticMs": 0.0, "transcriptWriteMs": 0.0, "otherMs": 0.2}}
+[student_results] session created -> 20261126_212228_ff3fb2ec
+[audio] request=ear-temp-0 bytes=3244 samples=1600 sr=16000 rms=0.134349 peak=0.189997 gate=0.003000
+[fusion] {"requestId": "ear-temp-0", "text": "嗶一聲就好了喔", "tension": -5.0, "intent": "reassure", "processingMs": 14.8, "timings": {"bodyReadMs": 0.0, "queueWaitMs": 0.0, "decodeMs": 2.4, "recordingWriteMs": 0.0, "preprocessMs": 1.6, "deepgramMs": 0.0, "semanticMs": 2.5, "transcriptWriteMs": 8.1, "otherMs": 0.2}}
+[audio] request=ear-temp-1 bytes=3244 samples=1600 sr=16000 rms=0.134349 peak=0.189997 gate=0.003000
+[fusion] {"requestId": "ear-temp-1", "text": "幫熊熊量耳溫", "tension": -5.0, "intent": "reassure", "processingMs": 16.5, "timings": {"bodyReadMs": 0.0, "queueWaitMs": 0.0, "decodeMs": 2.4, "recordingWriteMs": 0.0, "preprocessMs": 2.0, "deepgramMs": 0.0, "semanticMs": 3.6, "transcriptWriteMs": 8.2, "otherMs": 0.3}}
+[student_results] session created -> 20261126_212228_66e3b610
+[student_results] session created -> 20261126_212228_17a2521c
+[audio] request=silent-1 bytes=3244 samples=1600 sr=16000 rms=0.000000 peak=0.000000 gate=0.003000
+[fusion] {"requestId": "silent-1", "text": "", "tension": -5.0, "intent": "neutral", "processingMs": 5.1, "timings": {"bodyReadMs": 0.0, "queueWaitMs": 0.0, "decodeMs": 2.9, "recordingWriteMs": 0.0, "preprocessMs": 2.0, "deepgramMs": 0.0, "semanticMs": 0.0, "transcriptWriteMs": 0.0, "otherMs": 0.2}}
+[student_results] session created -> 20261126_212228_fe5d83e0
+[student_results] session created -> 20261126_212233_f9c46079
+[student_results] session=20261126_212233_f9c46079 result=0c94b60e-0af4-42a6-8c02-df403f244275 duplicate=False student=412345678 received: correctCount=6 toneScore=18 questionScore=68 -> question=68 total=86
+[student_results] session=20261126_212233_f9c46079 result=0c94b60e-0af4-42a6-8c02-df403f244275 duplicate=True student=412345678 received: correctCount=6 toneScore=18 questionScore=68 -> question=68 total=86
+[student_results] session created -> 20261126_212233_85c0c1a5
+[student_results] session=20261126_212233_85c0c1a5 result=f619aa0e-9ed2-49b9-8b77-5080cb9f91f3 duplicate=False student=412345678 received: correctCount=7 toneScore=18 questionScore=None -> question=70 total=88
+[student_results] failed to write feedback report: disk full
+[student_results] session=20261126_212233_85c0c1a5 result=f619aa0e-9ed2-49b9-8b77-5080cb9f91f3 duplicate=True student=412345678 received: correctCount=7 toneScore=18 questionScore=None -> question=70 total=88
+[student_results] session created -> 20261126_212233_346968ab
+[student_results] session=20261126_212233_346968ab result=c6ef10dc-2995-4db2-abff-66cb449ba70d duplicate=False student=412345678 received: correctCount=7 toneScore=18 questionScore=None -> question=70 total=88
+[student_results] session=20261126_212233_346968ab result=c6ef10dc-2995-4db2-abff-66cb449ba70d duplicate=True student=412345678 received: correctCount=7 toneScore=18 questionScore=None -> question=70 total=88
+[student_results] session created -> 20261126_212234_d2cfa5dd
+[student_results] session=20261126_212234_d2cfa5dd result=092b7526-7007-410d-84e1-b330d1bc00d7 duplicate=False student=412345678 received: correctCount=7 toneScore=18 questionScore=None -> question=70 total=88
+[student_results] session created -> 20261126_212234_3f337d7b
+[student_results] session=20261126_212234_3f337d7b result=be817301-e875-482b-82bd-923b4ca9b55b duplicate=False student=412345678 received: correctCount=7 toneScore=18 questionScore=60 -> question=60 total=78
+[student_results] session=20261126_212234_3f337d7b result=be817301-e875-482b-82bd-923b4ca9b55b duplicate=True student=412345678 received: correctCount=7 toneScore=18 questionScore=60 -> question=60 total=78
+[student_results] session created -> 20261126_212234_c95b0101
+[student_results] session created -> 20261126_212234_fc6c6535
+[student_results] session created -> 20261126_212234_472e0715
+[upload] enqueue failed; background discovery will retry
+[student_results] session=20261126_212234_472e0715 result=d54f9957-91ab-4c8e-b2f1-dd83d0913e56 duplicate=False student=412345678 received: correctCount=7 toneScore=18 questionScore=None -> question=70 total=88
+[upload] result uploaded
+[upload] HTTP 409; needs review
+[upload] result uploaded
+[upload] network or response failure; will retry
+[upload] result uploaded
+[upload] result uploaded
+[upload] network or response failure; will retry

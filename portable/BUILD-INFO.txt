@@ -1,6 +1,5 @@
-Source: https://github.com/smile1553/nurse_backend
-Commit: 46beaa7360914b6296e96234c89fc05285916264
+Updated: 2026-11-26
 Python: official CPython 3.13.9 Windows embeddable amd64
-Download: https://www.python.org/ftp/python/3.13.9/python-3.13.9-embed-amd64.zip
-Runtime: Deepgram, no local faster-whisper
-Source behavior unchanged; portable startup and configuration added.
+Runtime: Deepgram nova-3, language fixed to zh-TW
+Transcript normalization: hanziconv 0.3.2
+Backend source synchronized with this workspace.
