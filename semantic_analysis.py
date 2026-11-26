@@ -1,6 +1,7 @@
 from typing import Any, Dict, List, Optional, Tuple
 
 from intent_llm import analyze_intent
+from tone_guard import apply_tone_guard, check_before_llm
 
 
 DEFAULT_SEMANTIC_ANALYSIS = {
@@ -80,6 +81,16 @@ def analyze_semantics(
     history = [item for item in (recent_texts or []) if item]
     previous = history[-1] if history else ""
     window_text = f"{previous} | {value}" if previous else value
+
+    # ASR noise, the game's own voice lines and jokes are not judged (and cost no API call).
+    skip = check_before_llm(value)
+    if skip:
+        result = dict(DEFAULT_SEMANTIC_ANALYSIS)
+        result["guard_rule"] = skip
+        return result, window_text
+
     result = analyze_intent([previous] if previous else [], value, context=context)
+    # Second pass: catch scolding the LLM missed and harsh sentences softened by nice words.
+    result = apply_tone_guard(result, value)
 
     return result, window_text
